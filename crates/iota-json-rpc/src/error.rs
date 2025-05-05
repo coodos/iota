@@ -178,10 +178,7 @@ impl From<Error> for RpcError {
                             ErrorObject::owned::<()>(TRANSIENT_ERROR_CODE, err.to_string(), None);
                         RpcError::Call(error_object)
                     }
-                    QuorumDriverError::ObjectsDoubleUsed {
-                        conflicting_txes,
-                        retried_tx_status,
-                    } => {
+                    QuorumDriverError::ObjectsDoubleUsed { conflicting_txes } => {
                         let weights: Vec<u64> =
                             conflicting_txes.values().map(|(_, stake)| *stake).collect();
                         let remaining: u64 = TOTAL_VOTING_POWER - weights.iter().sum::<u64>();
@@ -512,11 +509,7 @@ mod tests {
             let authority_name = AuthorityPublicKeyBytes([1; AuthorityPublicKey::LENGTH]);
             conflicting_txes.insert(tx_digest, (vec![(authority_name, object_ref)], stake_unit));
 
-            let quorum_driver_error = QuorumDriverError::ObjectsDoubleUsed {
-                conflicting_txes,
-                // below threshold
-                retried_tx_status: None,
-            };
+            let quorum_driver_error = QuorumDriverError::ObjectsDoubleUsed { conflicting_txes };
 
             let rpc_error: RpcError = Error::QuorumDriver(quorum_driver_error).into();
 
