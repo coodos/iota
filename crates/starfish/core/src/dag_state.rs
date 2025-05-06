@@ -897,13 +897,13 @@ impl DagState {
             .partition(|x| x.round < clock_round);
 
         // Split below_clock_round into taken and leftover
-        let acknowlegments = below_clock_round.drain(..).take(limit).collect::<Vec<_>>();
+        let acknowledgments = below_clock_round.drain(..).take(limit).collect::<Vec<_>>();
 
         // Remaining acknowledgments go back to the queue
         below_clock_round.extend(at_least_clock_round);
         self.pending_acknowledgments = below_clock_round;
 
-        acknowlegments
+        acknowledgments
     }
 
     /// Index of the last commit.
