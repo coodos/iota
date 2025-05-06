@@ -191,9 +191,7 @@ impl From<Error> for RpcError {
                         };
 
                         let error_message = format!(
-                            "Failed to sign transaction by a quorum of validators because one or more of its objects is {}. {} Other transactions locking these objects:\n{}",
-                            reason,
-                            retried_info,
+                            "Failed to sign transaction by a quorum of validators because one or more of its objects is {reason}. Other transactions locking these objects:\n{}",
                             conflicting_txes
                                 .iter()
                                 .sorted_by(|(_, (_, a)), (_, (_, b))| b.cmp(a))
@@ -456,10 +454,7 @@ mod tests {
             let authority_name = AuthorityPublicKeyBytes([1; AuthorityPublicKey::LENGTH]);
             conflicting_txes.insert(tx_digest, (vec![(authority_name, object_ref)], stake_unit));
 
-            let quorum_driver_error = QuorumDriverError::ObjectsDoubleUsed {
-                conflicting_txes,
-                retried_tx_status: Some((TransactionDigest::from([1; 32]), true)),
-            };
+            let quorum_driver_error = QuorumDriverError::ObjectsDoubleUsed { conflicting_txes };
 
             let error_object: ErrorObjectOwned = Error::QuorumDriver(quorum_driver_error).into();
 
@@ -505,9 +500,11 @@ mod tests {
             let error_object = error_object_from_rpc(rpc_error);
             let expected_code = expect!["-32002"];
             expected_code.assert_eq(&error_object.code().to_string());
-            let expected_message = expect![
-                "Failed to sign transaction by a quorum of validators because one or more of its objects is equivocated until the next epoch.  Other transactions locking these objects:\n- 8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR (stake 50.0)\n- 4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi (stake 40.0)"
-            ];
+            println!("error_object.message() {}", error_object.message());
+            let expected_message = expect![[r#"
+                Failed to sign transaction by a quorum of validators because one or more of its objects is equivocated until the next epoch. Other transactions locking these objects:
+                - 8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR (stake 50.0)
+                - 4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi (stake 40.0)"#]];
             expected_message.assert_eq(error_object.message());
             let expected_data = expect![[
                 r#"{"4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi":[["0x0000000000000000000000000000000000000000000000000000000000000000",0,"11111111111111111111111111111111"]],"8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR":[["0x0000000000000000000000000000000000000000000000000000000000000000",0,"11111111111111111111111111111111"]]}"#
