@@ -24,7 +24,7 @@ pub(crate) trait Store: Send + Sync {
     fn write(&self, write_batch: WriteBatch) -> ConsensusResult<()>;
 
     /// Reads blocks for the given refs.
-    fn read_blocks(&self, refs: &[BlockRef]) -> ConsensusResult<Vec<Option<VerifiedBlockHeader>>>;
+    fn read_blocks(&self, refs: &[BlockRef]) -> ConsensusResult<Vec<Option<VerifiedBlock>>>;
 
     /// Checks if blocks exist in the store.
     fn contains_blocks(&self, refs: &[BlockRef]) -> ConsensusResult<Vec<bool>>;

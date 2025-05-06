@@ -44,6 +44,7 @@ use crate::{
         UniversalCommitter, universal_committer_builder::UniversalCommitterBuilder,
     },
 };
+use crate::block_header::VerifiedBlock;
 
 // Maximum number of commit votes to include in a block.
 // TODO: Move to protocol config, and verify in BlockVerifier.
@@ -140,9 +141,9 @@ impl Core {
         .build();
 
         // Recover the last proposed block
-        let last_proposed_block = dag_state.read().get_last_proposed_block();
+        let last_proposed_block_header = dag_state.read().get_last_proposed_block_header();
 
-        let last_signaled_round = last_proposed_block.round();
+        let last_signaled_round = last_proposed_block_header.round();
 
         // Recover the last included ancestor rounds based on the last proposed block.
         // That will allow to perform the next block proposal by using ancestor
@@ -155,7 +156,7 @@ impl Core {
         // and it mostly matters just for this next proposal without any actual
         // penalties in performance or block proposal.
         let mut last_included_ancestors = vec![None; context.committee.size()];
-        for ancestor in last_proposed_block.ancestors() {
+        for ancestor in last_proposed_block_header.ancestors() {
             last_included_ancestors[ancestor.author] = Some(*ancestor);
         }
 
@@ -222,11 +223,11 @@ impl Core {
             let last_proposed_block = self.dag_state.read().get_last_proposed_block();
             if self.should_propose() {
                 assert!(
-                    last_proposed_block.round() > GENESIS_ROUND,
+                    last_proposed_block.is_some(),
                     "At minimum a block of round higher than genesis should have been produced during recovery"
                 );
             }
-
+            let last_proposed_block = last_proposed_block.expect("we should expect Some block due to preliminary check");
             // if no new block proposed then just re-broadcast the last proposed one to
             // ensure liveness.
             self.signals.new_block(last_proposed_block.clone()).unwrap();
@@ -354,7 +355,7 @@ impl Core {
         &mut self,
         round: Round,
         force: bool,
-    ) -> ConsensusResult<Option<VerifiedBlockHeader>> {
+    ) -> ConsensusResult<Option<VerifiedBlock>> {
         let _scope = monitored_scope("Core::new_block");
         if self.last_proposed_round() < round {
             self.context
@@ -374,7 +375,7 @@ impl Core {
     // Attempts to create a new block, persist and propose it to all peers.
     // When force is true, ignore if leader from the last round exists among
     // ancestors and if the minimum round delay has passed.
-    fn try_propose(&mut self, force: bool) -> ConsensusResult<Option<VerifiedBlockHeader>> {
+    fn try_propose(&mut self, force: bool) -> ConsensusResult<Option<VerifiedBlock>> {
         if !self.should_propose() {
             return Ok(None);
         }
@@ -393,7 +394,7 @@ impl Core {
     /// Attempts to propose a new block for the next round. If a block has
     /// already proposed for latest or earlier round, then no block is
     /// created and None is returned.
-    fn try_new_block(&mut self, force: bool) -> Option<VerifiedBlockHeader> {
+    fn try_new_block(&mut self, force: bool) -> Option<VerifiedBlock> {
         let _s = self
             .context
             .metrics
@@ -406,7 +407,7 @@ impl Core {
         let clock_round = {
             let dag_state = self.dag_state.read();
             let clock_round = dag_state.threshold_clock_round();
-            if clock_round <= dag_state.get_last_proposed_block().round() {
+            if clock_round <= dag_state.get_last_proposed_block_header().round() {
                 return None;
             }
             clock_round
@@ -563,8 +564,7 @@ impl Core {
             VerifiedBlockHeader::new_verified(signed_block_header, serialized_signed_block_header);
 
         // Record the interval from last proposal, before accepting the proposed block.
-        let last_proposed_block = self.last_proposed_block();
-        if last_proposed_block.round() > 0 {
+        if self.last_proposed_round() > 0 {
             self.context
                 .metrics
                 .node_metrics
@@ -573,7 +573,7 @@ impl Core {
                     Duration::from_millis(
                         verified_block_header
                             .timestamp_ms()
-                            .saturating_sub(last_proposed_block.timestamp_ms()),
+                            .saturating_sub(self.last_proposed_timestamp_ms()),
                     )
                     .as_secs_f64(),
                 );
@@ -588,7 +588,7 @@ impl Core {
 
         // Construct verified transactions to be used for storing and broadcasting
         // TODO: consume this transactions in the data manager and for broadcasting
-        let _verified_transactions = VerifiedTransactions::new(
+        let verified_transactions = VerifiedTransactions::new(
             transactions,
             verified_block_header.reference(),
             serialized_transactions,
@@ -609,7 +609,10 @@ impl Core {
             .with_label_values(&[&force.to_string()])
             .inc();
 
-        Some(verified_block_header)
+        Some(VerifiedBlock {
+            verified_block_header,
+            verified_transactions,
+        })
     }
 
     /// Runs commit rule to attempt to commit additional blocks from the DAG. If
@@ -839,7 +842,7 @@ impl Core {
 
         // Propose only ancestors of higher rounds than what has already been proposed.
         // And always include own last proposed block first among ancestors.
-        let included_ancestors = iter::once(self.last_proposed_block().clone())
+        let included_ancestors = iter::once(self.last_proposed_block_header().clone())
             .chain(all_ancestors.into_iter().flat_map(|(ancestor, _)| {
                 if ancestor.author() == self.context.own_index {
                     return None;
@@ -914,22 +917,26 @@ impl Core {
     }
 
     fn last_proposed_timestamp_ms(&self) -> BlockTimestampMs {
-        self.last_proposed_block().timestamp_ms()
+        self.last_proposed_block_header().timestamp_ms()
     }
 
     fn last_proposed_round(&self) -> Round {
-        self.last_proposed_block().round()
+        self.last_proposed_block_header().round()
     }
 
-    fn last_proposed_block(&self) -> VerifiedBlockHeader {
+    fn last_proposed_block(&self) -> Option<VerifiedBlock> {
         self.dag_state.read().get_last_proposed_block()
+    }
+
+    fn last_proposed_block_header(&self) -> VerifiedBlockHeader {
+        self.dag_state.read().get_last_proposed_block_header()
     }
 }
 
 /// Senders of signals from Core, for outputs and events (ex new block
 /// produced).
 pub(crate) struct CoreSignals {
-    tx_block_broadcast: broadcast::Sender<VerifiedBlockHeader>,
+    tx_block_broadcast: broadcast::Sender<VerifiedBlock>,
     new_round_sender: watch::Sender<Round>,
     context: Arc<Context>,
 }
@@ -939,7 +946,7 @@ impl CoreSignals {
         // Blocks buffered in broadcast channel should be roughly equal to thosed cached
         // in dag state, since the underlying blocks are ref counted so a lower
         // buffer here will not reduce memory usage significantly.
-        let (tx_block_broadcast, rx_block_broadcast) = broadcast::channel::<VerifiedBlockHeader>(
+        let (tx_block_broadcast, rx_block_broadcast) = broadcast::channel::<VerifiedBlock>(
             context.parameters.dag_state_cached_rounds as usize,
         );
         let (new_round_sender, new_round_receiver) = watch::channel(0);
@@ -961,7 +968,7 @@ impl CoreSignals {
     /// Sends a signal to all the waiters that a new block has been produced.
     /// The method will return true if block has reached even one
     /// subscriber, false otherwise.
-    pub(crate) fn new_block(&self, verified_block: VerifiedBlockHeader) -> ConsensusResult<()> {
+    pub(crate) fn new_block(&self, verified_block: VerifiedBlock) -> ConsensusResult<()> {
         // When there is only one authority in committee, it is unnecessary to broadcast
         // the block which will fail anyway without subscribers to the signal.
         if self.context.committee.size() > 1 {
@@ -994,12 +1001,12 @@ impl CoreSignals {
 /// Intentionally un-cloneable. Components should only subscribe to channels
 /// they need.
 pub(crate) struct CoreSignalsReceivers {
-    rx_block_broadcast: broadcast::Receiver<VerifiedBlockHeader>,
+    rx_block_broadcast: broadcast::Receiver<VerifiedBlock>,
     new_round_receiver: watch::Receiver<Round>,
 }
 
 impl CoreSignalsReceivers {
-    pub(crate) fn block_broadcast_receiver(&self) -> broadcast::Receiver<VerifiedBlockHeader> {
+    pub(crate) fn block_broadcast_receiver(&self) -> broadcast::Receiver<VerifiedBlock> {
         self.rx_block_broadcast.resubscribe()
     }
 

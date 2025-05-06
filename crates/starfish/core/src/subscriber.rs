@@ -62,7 +62,7 @@ impl<C: NetworkClient, S: NetworkService> Subscriber<C, S> {
         let authority_service = self.authority_service.clone();
         let last_received = {
             let dag_state = self.dag_state.read();
-            dag_state.get_last_block_for_authority(peer).round()
+            dag_state.get_last_block_header_for_authority(peer).round()
         };
 
         let mut subscriptions = self.subscriptions.lock();

@@ -21,6 +21,7 @@ use crate::{
     },
     error::ConsensusResult,
 };
+use crate::block_header::VerifiedBlock;
 
 /// In-memory storage for testing.
 pub(crate) struct MemStore {
@@ -28,7 +29,8 @@ pub(crate) struct MemStore {
 }
 
 struct Inner {
-    blocks: BTreeMap<(Round, AuthorityIndex, BlockHeaderDigest), VerifiedBlockHeader>,
+    blocks: BTreeMap<(Round, AuthorityIndex, BlockHeaderDigest), VerifiedBlock>,
+    block_headers: BTreeMap<(Round, AuthorityIndex, BlockHeaderDigest), VerifiedBlockHeader>,
     digests_by_authorities: BTreeSet<(AuthorityIndex, Round, BlockHeaderDigest)>,
     commits: BTreeMap<(CommitIndex, CommitDigest), TrustedCommit>,
     commit_votes: BTreeSet<(CommitIndex, CommitDigest, BlockRef)>,
@@ -40,6 +42,7 @@ impl MemStore {
         MemStore {
             inner: RwLock::new(Inner {
                 blocks: BTreeMap::new(),
+                block_headers: BTreeMap::new(),
                 digests_by_authorities: BTreeSet::new(),
                 commits: BTreeMap::new(),
                 commit_votes: BTreeSet::new(),
@@ -86,7 +89,7 @@ impl Store for MemStore {
         Ok(())
     }
 
-    fn read_blocks(&self, refs: &[BlockRef]) -> ConsensusResult<Vec<Option<VerifiedBlockHeader>>> {
+    fn read_blocks(&self, refs: &[BlockRef]) -> ConsensusResult<Vec<Option<VerifiedBlock>>> {
         let inner = self.inner.read();
         let blocks = refs
             .iter()

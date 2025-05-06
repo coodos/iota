@@ -133,7 +133,7 @@ impl BlockHeaderV1 {
         }
     }
 
-    fn genesis_block(epoch: Epoch, author: AuthorityIndex) -> Self {
+    fn genesis_block_header(epoch: Epoch, author: AuthorityIndex) -> Self {
         Self {
             epoch,
             round: GENESIS_ROUND,
@@ -630,6 +630,7 @@ impl fmt::Debug for VerifiedBlockHeader {
 }
 
 /// VerifiedTransactions are transactions that correspond to an existing block
+#[derive(Clone, Debug)]
 pub struct VerifiedTransactions {
     #[expect(dead_code)]
     transactions: Vec<Transaction>,
@@ -657,23 +658,49 @@ impl VerifiedTransactions {
     }
 }
 
+/// VerifiedBlock is a pair of verified block header and transactions. It is used for streaming and storing
+#[derive(Clone, Debug)]
+pub struct VerifiedBlock {
+    /// The block header.
+    pub verified_block_header: VerifiedBlockHeader,
+
+    /// The transactions in the block.
+    pub verified_transactions: VerifiedTransactions,
+}
+
+/// Allow quick access on the underlying BlockHeader without having to always
+/// refer to the inner block ref.
+impl Deref for VerifiedBlock {
+    type Target = VerifiedBlockHeader;
+
+    fn deref(&self) -> &Self::Target {
+        &self.verified_block_header
+    }
+}
 /// Generates the genesis blocks for the current Committee.
 /// The blocks are returned in authority index order.
-pub(crate) fn genesis_block_headers(context: Arc<Context>) -> Vec<VerifiedBlockHeader> {
+pub(crate) fn genesis_block_headers(context: Arc<Context>) -> Vec<VerifiedBlock> {
     context
         .committee
         .authorities()
         .map(|(authority_index, _)| {
             let signed_block = SignedBlockHeader::new_genesis(BlockHeader::V1(
-                BlockHeaderV1::genesis_block(context.committee.epoch(), authority_index),
+                BlockHeaderV1::genesis_block_header(context.committee.epoch(), authority_index),
             ));
             let serialized = signed_block
                 .serialize()
                 .expect("Genesis block serialization failed.");
             // Unnecessary to verify genesis block headers.
-            VerifiedBlockHeader::new_verified(signed_block, serialized)
-        })
-        .collect::<Vec<VerifiedBlockHeader>>()
+            let verified_block_header =  VerifiedBlockHeader::new_verified(signed_block, serialized);
+            VerifiedBlock{
+                verified_block_header: verified_block_header.clone(),
+                verified_transactions: VerifiedTransactions{
+                    transactions: vec![],
+                    block_ref: verified_block_header.reference(),
+                    serialized: Bytes::new(),
+                },
+        }})
+        .collect::<Vec<VerifiedBlock>>()
 }
 
 /// This struct is public for testing in other crates.

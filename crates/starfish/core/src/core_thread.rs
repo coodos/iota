@@ -190,7 +190,7 @@ impl ChannelCoreThreadDispatcher {
                 .committee
                 .authorities()
                 .map(|(index, _)| {
-                    AtomicU32::new(dag_state.get_last_block_for_authority(index).round())
+                    AtomicU32::new(dag_state.get_last_block_header_for_authority(index).round())
                 })
                 .collect();
 

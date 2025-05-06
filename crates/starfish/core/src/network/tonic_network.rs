@@ -37,7 +37,7 @@ use super::{
 };
 use crate::{
     CommitIndex, Round,
-    block_header::{BlockRef, VerifiedBlockHeader},
+    block_header::{BlockRef},
     commit::CommitRange,
     context::Context,
     error::{ConsensusError, ConsensusResult},
@@ -46,6 +46,7 @@ use crate::{
         tonic_tls::create_rustls_server_config,
     },
 };
+use crate::block_header::VerifiedBlock;
 
 // Maximum bytes size in a single fetch_blocks()response.
 // TODO: put max RPC response size in protocol config.
@@ -54,6 +55,13 @@ const MAX_FETCH_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 // Maximum total bytes fetched in a single fetch_blocks() call, after combining
 // the responses.
 const MAX_TOTAL_FETCHED_BYTES: usize = 128 * 1024 * 1024;
+
+/// SerializedBlock is used to send blocks over the network. It contains separately
+/// the serialized block header and the serialized transactions. 
+pub(crate) struct SerializedBlock {
+    serialized_block_header: Bytes,
+    serialized_transactions: Bytes,
+}
 
 // Implements Tonic RPC client for Consensus.
 pub(crate) struct TonicClient {
@@ -103,7 +111,7 @@ impl NetworkClient for TonicClient {
     async fn send_block(
         &self,
         peer: AuthorityIndex,
-        block: &VerifiedBlockHeader,
+        block: &VerifiedBlock,
         timeout: Duration,
     ) -> ConsensusResult<()> {
         let mut client = self.get_client(peer, timeout).await?;

@@ -18,9 +18,10 @@ use tokio::{
 use tracing::{trace, warn};
 
 use crate::{
-    BlockHeaderAPI, VerifiedBlockHeader, context::Context, core::CoreSignalsReceivers,
+    BlockHeaderAPI, context::Context, core::CoreSignalsReceivers,
     error::ConsensusResult, network::NetworkClient,
 };
+use crate::block_header::VerifiedBlock;
 
 /// Number of Blocks that can be inflight sending to a peer.
 const BROADCAST_CONCURRENCY: usize = 10;
@@ -73,7 +74,7 @@ impl Broadcaster {
     async fn push_blocks<C: NetworkClient>(
         context: Arc<Context>,
         network_client: Arc<C>,
-        mut rx_block_broadcast: broadcast::Receiver<VerifiedBlockHeader>,
+        mut rx_block_broadcast: broadcast::Receiver<VerifiedBlock>,
         peer: AuthorityIndex,
     ) {
         let peer_hostname = &context.committee.authority(peer).hostname;
@@ -82,7 +83,7 @@ impl Broadcaster {
         // produced for awhile. Even if the peer has acknowledged the last
         // block, the block might have been dropped afterwards if the peer
         // crashed.
-        let mut last_block: Option<VerifiedBlockHeader> = None;
+        let mut last_block: Option<VerifiedBlock> = None;
 
         // Retry last block with an interval.
         let mut retry_timer = tokio::time::interval(Self::LAST_BLOCK_RETRY_INTERVAL);
@@ -104,11 +105,11 @@ impl Broadcaster {
             network_client: Arc<C>,
             peer: AuthorityIndex,
             rtt_estimate: Duration,
-            block: VerifiedBlockHeader,
+            block: VerifiedBlock,
         ) -> (
             Result<ConsensusResult<()>, Elapsed>,
             Instant,
-            VerifiedBlockHeader,
+            VerifiedBlock,
         ) {
             let start = Instant::now();
             let req_timeout = rtt_estimate.mul_f64(TIMEOUT_THRESHOLD_MULTIPLIER);

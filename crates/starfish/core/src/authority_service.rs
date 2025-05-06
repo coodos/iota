@@ -29,6 +29,7 @@ use crate::{
     storage::Store,
     synchronizer::SynchronizerHandle,
 };
+use crate::block_header::VerifiedBlock;
 
 pub(crate) const COMMIT_LAG_MULTIPLIER: u32 = 5;
 
@@ -40,7 +41,7 @@ pub(crate) struct AuthorityService<C: CoreThreadDispatcher> {
     block_verifier: Arc<dyn BlockVerifier>,
     synchronizer: Arc<SynchronizerHandle>,
     core_dispatcher: Arc<C>,
-    rx_block_broadcaster: broadcast::Receiver<VerifiedBlockHeader>,
+    rx_block_broadcaster: broadcast::Receiver<VerifiedBlock>,
     subscription_counter: Arc<SubscriptionCounter>,
     dag_state: Arc<RwLock<DagState>>,
     store: Arc<dyn Store>,
@@ -53,7 +54,7 @@ impl<C: CoreThreadDispatcher> AuthorityService<C> {
         commit_vote_monitor: Arc<CommitVoteMonitor>,
         synchronizer: Arc<SynchronizerHandle>,
         core_dispatcher: Arc<C>,
-        rx_block_broadcaster: broadcast::Receiver<VerifiedBlockHeader>,
+        rx_block_broadcaster: broadcast::Receiver<VerifiedBlock>,
         dag_state: Arc<RwLock<DagState>>,
         store: Arc<dyn Store>,
     ) -> Self {
@@ -413,7 +414,7 @@ impl<C: CoreThreadDispatcher> NetworkService for AuthorityService<C> {
         let mut blocks = vec![];
         let dag_state = self.dag_state.read();
         for authority in authorities {
-            let block = dag_state.get_last_block_for_authority(authority);
+            let block = dag_state.get_last_block_header_for_authority(authority);
 
             debug!("Latest block for {authority}: {block:?} as requested from {peer}");
 
@@ -541,7 +542,7 @@ impl SubscriptionCounter {
 
 /// Each broadcasted block stream wraps a broadcast receiver for blocks.
 /// It yields blocks that are broadcasted after the stream is created.
-type BroadcastedBlockStream = BroadcastStream<VerifiedBlockHeader>;
+type BroadcastedBlockStream = BroadcastStream<VerifiedBlock>;
 
 /// Adapted from `tokio_stream::wrappers::BroadcastStream`. The main difference
 /// is that this tolerates lags with only logging, without yielding errors.
@@ -660,6 +661,7 @@ mod tests {
         synchronizer::Synchronizer,
         test_dag_builder::DagBuilder,
     };
+    use crate::block_header::VerifiedBlock;
 
     struct FakeCoreThreadDispatcher {
         blocks: Mutex<Vec<VerifiedBlockHeader>>,
@@ -726,7 +728,7 @@ mod tests {
         async fn send_block(
             &self,
             _peer: AuthorityIndex,
-            _block: &VerifiedBlockHeader,
+            _block: &VerifiedBlock,
             _timeout: Duration,
         ) -> ConsensusResult<()> {
             unimplemented!("Unimplemented")

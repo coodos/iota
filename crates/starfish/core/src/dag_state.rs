@@ -31,6 +31,7 @@ use crate::{
     storage::{Store, WriteBatch},
     threshold_clock::ThresholdClock,
 };
+use crate::block_header::VerifiedBlock;
 
 /// DagState provides the API to write and read accepted blocks from the DAG.
 /// Only uncommitted and last committed blocks are cached in memory.
@@ -44,11 +45,16 @@ pub(crate) struct DagState {
     context: Arc<Context>,
 
     // The genesis blocks
-    genesis: BTreeMap<BlockRef, VerifiedBlockHeader>,
+    genesis: BTreeMap<BlockRef, VerifiedBlock>,
 
-    // Contains recent blocks within CACHED_ROUNDS from the last committed round per authority.
+    // Contains recent block headers within CACHED_ROUNDS from the last committed round per authority.
+    // Note: all uncommitted block headers are kept in memory.
+    recent_block_headers: BTreeMap<BlockRef, VerifiedBlockHeader>,
+
+    // Contains recent block (together with transactions) within CACHED_ROUNDS from the last committed round per authority.
     // Note: all uncommitted blocks are kept in memory.
-    recent_blocks: BTreeMap<BlockRef, VerifiedBlockHeader>,
+    recent_blocks: BTreeMap<BlockRef, VerifiedBlock>,
+
 
     // Indexes recent block refs by their authorities.
     // Vec position corresponds to the authority index.
@@ -163,6 +169,7 @@ impl DagState {
         let mut state = Self {
             context,
             genesis,
+            recent_block_headers: BTreeMap::new(),
             recent_blocks: BTreeMap::new(),
             recent_refs_by_authority: vec![BTreeSet::new(); num_authorities],
             threshold_clock,
@@ -262,7 +269,7 @@ impl DagState {
     /// Updates internal metadata for a block.
     fn update_block_metadata(&mut self, block: &VerifiedBlockHeader) {
         let block_ref = block.reference();
-        self.recent_blocks.insert(block_ref, block.clone());
+        self.recent_block_headers.insert(block_ref, block.clone());
         self.recent_refs_by_authority[block_ref.author].insert(block_ref);
         self.threshold_clock.add_block(block_ref);
         self.highest_accepted_round = max(self.highest_accepted_round, block.round());
@@ -307,7 +314,7 @@ impl DagState {
     /// Gets blocks by checking genesis, cached recent blocks in memory, then
     /// storage. An element is None when the corresponding block is not
     /// found.
-    pub(crate) fn get_blocks(&self, block_refs: &[BlockRef]) -> Vec<Option<VerifiedBlockHeader>> {
+    pub(crate) fn get_blocks(&self, block_refs: &[BlockRef]) -> Vec<Option<VerifiedBlock>> {
         let mut blocks = vec![None; block_refs.len()];
         let mut missing = Vec::new();
 
@@ -361,7 +368,7 @@ impl DagState {
         // to edge cases.
 
         let mut blocks = vec![];
-        for (_block_ref, block) in self.recent_blocks.range((
+        for (_block_ref, block) in self.recent_block_headers.range((
             Included(BlockRef::new(
                 slot.round,
                 slot.authority,
@@ -387,7 +394,7 @@ impl DagState {
         }
 
         let mut blocks = vec![];
-        for (_block_ref, block) in self.recent_blocks.range((
+        for (_block_ref, block) in self.recent_block_headers.range((
             Included(BlockRef::new(
                 round,
                 AuthorityIndex::ZERO,
@@ -443,20 +450,34 @@ impl DagState {
 
     /// Gets the last proposed block from this authority.
     /// If no block is proposed yet, returns the genesis block.
-    pub(crate) fn get_last_proposed_block(&self) -> VerifiedBlockHeader {
-        self.get_last_block_for_authority(self.context.own_index)
+    pub(crate) fn get_last_proposed_block(&self) -> Option<VerifiedBlock> {
+        if let Some(last) = self.recent_refs_by_authority[self.context.own_index].last() {
+            return Some(self
+                .recent_blocks
+                .get(last)
+                .expect("Block should be found in recent blocks")
+                .clone());
+        }
+
+        None
+    }
+
+    /// Gets the last proposed block from this authority.
+    /// If no block is proposed yet, returns the genesis block.
+    pub(crate) fn get_last_proposed_block_header(&self) -> VerifiedBlockHeader {
+        self.get_last_block_header_for_authority(self.context.own_index)
     }
 
     /// Retrieves the last accepted block from the specified `authority`. If no
     /// block is found in cache then the genesis block is returned as no other
     /// block has been received from that authority.
-    pub(crate) fn get_last_block_for_authority(
+    pub(crate) fn get_last_block_header_for_authority(
         &self,
         authority: AuthorityIndex,
     ) -> VerifiedBlockHeader {
         if let Some(last) = self.recent_refs_by_authority[authority].last() {
             return self
-                .recent_blocks
+                .recent_block_headers
                 .get(last)
                 .expect("Block should be found in recent blocks")
                 .clone();
@@ -487,7 +508,7 @@ impl DagState {
             Unbounded,
         )) {
             let block = self
-                .recent_blocks
+                .recent_block_headers
                 .get(block_ref)
                 .expect("Block should exist in recent blocks");
             blocks.push(block.clone());
@@ -525,7 +546,7 @@ impl DagState {
             ))
             .last()?;
 
-        self.recent_blocks.get(block_ref).cloned()
+        self.recent_block_headers.get(block_ref).cloned()
     }
 
     /// Returns the last block proposed per authority with `evicted round <
@@ -588,7 +609,7 @@ impl DagState {
                 if last_round == 0 {
                     last_round = block_ref.round;
                     let block = self
-                        .recent_blocks
+                        .recent_block_headers
                         .get(block_ref)
                         .expect("Block should exist in recent blocks");
                     blocks[authority_index] = block.clone();
@@ -916,7 +937,7 @@ impl DagState {
             let eviction_round = self.calculate_authority_eviction_round(authority_index);
             while let Some(block_ref) = self.recent_refs_by_authority[authority_index].first() {
                 if block_ref.round <= eviction_round {
-                    self.recent_blocks.remove(block_ref);
+                    self.recent_block_headers.remove(block_ref);
                     self.recent_refs_by_authority[authority_index].pop_first();
                 } else {
                     break;
@@ -928,7 +949,7 @@ impl DagState {
         let metrics = &self.context.metrics.node_metrics;
         metrics
             .dag_state_recent_blocks
-            .set(self.recent_blocks.len() as i64);
+            .set(self.recent_block_headers.len() as i64);
         metrics.dag_state_recent_refs.set(
             self.recent_refs_by_authority
                 .iter()
@@ -1986,13 +2007,13 @@ mod test {
 
             let block = dag_state
                 .read()
-                .get_last_block_for_authority(AuthorityIndex::new_for_test(0));
+                .get_last_block_header_for_authority(AuthorityIndex::new_for_test(0));
             assert_eq!(block.round(), 5);
 
             for (authority_index, _) in context.committee.authorities() {
                 let block = dag_state
                     .read()
-                    .get_last_block_for_authority(authority_index);
+                    .get_last_block_header_for_authority(authority_index);
 
                 if authority_index.value() == 0 {
                     assert_eq!(block.round(), 5);

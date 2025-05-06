@@ -14,6 +14,7 @@ use crate::{
     dag_state::DagState,
     leader_schedule::LeaderSchedule,
 };
+use crate::block_header::VerifiedBlock;
 
 /// The `StorageAPI` trait provides an interface for the block store and has
 /// been mostly introduced for allowing to inject the test store in
@@ -25,7 +26,7 @@ pub(crate) trait BlockStoreAPI {
 impl BlockStoreAPI
     for parking_lot::lock_api::RwLockWriteGuard<'_, parking_lot::RawRwLock, DagState>
 {
-    fn get_blocks(&self, refs: &[BlockRef]) -> Vec<Option<VerifiedBlockHeader>> {
+    fn get_blocks(&self, refs: &[BlockRef]) -> Vec<Option<VerifiedBlock>> {
         DagState::get_blocks(self, refs)
     }
 }

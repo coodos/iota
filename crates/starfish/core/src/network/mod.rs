@@ -36,6 +36,7 @@ use crate::{
     context::Context,
     error::ConsensusResult,
 };
+use crate::block_header::VerifiedBlock;
 
 // Tonic generated RPC stubs.
 mod tonic_gen {
@@ -72,7 +73,7 @@ pub(crate) trait NetworkClient: Send + Sync + Sized + 'static {
     async fn send_block(
         &self,
         peer: AuthorityIndex,
-        block: &VerifiedBlockHeader,
+        block: &VerifiedBlock,
         timeout: Duration,
     ) -> ConsensusResult<()>;
 

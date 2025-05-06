@@ -23,6 +23,7 @@ use crate::{
     commit::{CommitAPI as _, CommitDigest, CommitIndex, CommitRange, CommitRef, TrustedCommit},
     error::{ConsensusError, ConsensusResult},
 };
+use crate::block_header::{VerifiedBlock, VerifiedTransactions};
 
 /// Persistent storage with RocksDB.
 pub(crate) struct RocksDBStore {
@@ -149,7 +150,8 @@ impl Store for RocksDBStore {
         Ok(())
     }
 
-    fn read_blocks(&self, refs: &[BlockRef]) -> ConsensusResult<Vec<Option<VerifiedBlockHeader>>> {
+    // TODO: change to correct behavior after implementing the storage
+    fn read_blocks(&self, refs: &[BlockRef]) -> ConsensusResult<Vec<Option<VerifiedBlock>>> {
         let keys = refs
             .iter()
             .map(|r| (r.round, r.author, r.digest))
@@ -164,7 +166,14 @@ impl Store for RocksDBStore {
                 let block = VerifiedBlockHeader::new_verified(signed_block, serialized);
                 // Makes sure block data is not corrupted, by comparing digests.
                 assert_eq!(*key, block.reference());
-                blocks.push(Some(block));
+                blocks.push(Some(
+                    VerifiedBlock{
+                        verified_block_header: block.clone(),
+                        verified_transactions: VerifiedTransactions::new(vec![],
+                            block.reference(),
+                            Bytes::new(),
+                        )                        
+                    }));
             } else {
                 blocks.push(None);
             }
