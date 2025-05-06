@@ -190,17 +190,6 @@ impl From<Error> for RpcError {
                             "reserved for another transaction"
                         };
 
-                        let retried_info = match retried_tx_status {
-                            Some((digest, success)) => {
-                                format!(
-                                    "Retried transaction {} ({}) because it was able to gather the necessary votes.",
-                                    digest,
-                                    if success { "succeeded" } else { "failed" }
-                                )
-                            }
-                            None => "".to_string(),
-                        };
-
                         let error_message = format!(
                             "Failed to sign transaction by a quorum of validators because one or more of its objects is {}. {} Other transactions locking these objects:\n{}",
                             reason,
