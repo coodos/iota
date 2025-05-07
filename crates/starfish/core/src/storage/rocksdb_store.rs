@@ -28,6 +28,8 @@ use crate::{
 pub(crate) struct RocksDBStore {
     /// Stores SignedBlock by refs.
     blocks: DBMap<(Round, AuthorityIndex, BlockHeaderDigest), Bytes>,
+    /// Stores SignedBlockHeader by refs.
+    block_headers: DBMap<(Round, AuthorityIndex, BlockHeaderDigest), Bytes>,
     /// A secondary index that orders refs first by authors.
     digests_by_authorities: DBMap<(AuthorityIndex, Round, BlockHeaderDigest), ()>,
     /// Maps commit index to Commit.
@@ -41,6 +43,7 @@ pub(crate) struct RocksDBStore {
 
 impl RocksDBStore {
     const BLOCKS_CF: &'static str = "blocks";
+    const BLOCK_HEADERS_CF: &'static str = "block_headers";
     const DIGESTS_BY_AUTHORITIES_CF: &'static str = "digests";
     const COMMITS_CF: &'static str = "commits";
     const COMMIT_VOTES_CF: &'static str = "commit_votes";
@@ -63,6 +66,14 @@ impl RocksDBStore {
                     .set_block_options(512, 128 << 10)
                     .options,
             ),
+            (
+                Self::BLOCK_HEADERS_CF,
+                default_db_options()
+                    .optimize_for_write_throughput_no_deletion()
+                    // TODO:think about these constants, for now it is a copy from blocks
+                    .set_block_options(512, 128 << 10)
+                    .options,
+            ),
             (Self::DIGESTS_BY_AUTHORITIES_CF, cf_options.clone()),
             (Self::COMMITS_CF, cf_options.clone()),
             (Self::COMMIT_VOTES_CF, cf_options.clone()),
@@ -76,8 +87,9 @@ impl RocksDBStore {
         )
         .expect("Cannot open database");
 
-        let (blocks, digests_by_authorities, commits, commit_votes, commit_info) = reopen!(&rocksdb,
+        let (blocks, block_headers, digests_by_authorities, commits, commit_votes, commit_info) = reopen!(&rocksdb,
             Self::BLOCKS_CF;<(Round, AuthorityIndex, BlockHeaderDigest), bytes::Bytes>,
+            Self::BLOCK_HEADERS_CF;<(Round, AuthorityIndex, BlockHeaderDigest), bytes::Bytes>,
             Self::DIGESTS_BY_AUTHORITIES_CF;<(AuthorityIndex, Round, BlockHeaderDigest), ()>,
             Self::COMMITS_CF;<(CommitIndex, CommitDigest), Bytes>,
             Self::COMMIT_VOTES_CF;<(CommitIndex, CommitDigest, BlockRef), ()>,
@@ -86,6 +98,7 @@ impl RocksDBStore {
 
         Self {
             blocks,
+            block_headers,
             digests_by_authorities,
             commits,
             commit_votes,
@@ -117,6 +130,33 @@ impl Store for RocksDBStore {
                 )
                 .map_err(ConsensusError::RocksDBFailure)?;
             for vote in block.commit_votes() {
+                batch
+                    .insert_batch(
+                        &self.commit_votes,
+                        [((vote.index, vote.digest, block_ref), ())],
+                    )
+                    .map_err(ConsensusError::RocksDBFailure)?;
+            }
+        }
+
+        for block_header in write_batch.block_headers {
+            let block_ref = block_header.reference();
+            batch
+                .insert_batch(
+                    &self.block_headers,
+                    [(
+                        (block_ref.round, block_ref.author, block_ref.digest),
+                        block_header.serialized(),
+                    )],
+                )
+                .map_err(ConsensusError::RocksDBFailure)?;
+            batch
+                .insert_batch(
+                    &self.digests_by_authorities,
+                    [((block_ref.author, block_ref.round, block_ref.digest), ())],
+                )
+                .map_err(ConsensusError::RocksDBFailure)?;
+            for vote in block_header.commit_votes() {
                 batch
                     .insert_batch(
                         &self.commit_votes,

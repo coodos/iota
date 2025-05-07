@@ -236,13 +236,13 @@ mod test {
 
     use super::*;
     use crate::{
-        VerifiedBlockHeader,
         block_header::BlockRef,
         commit::CommitRange,
         error::ConsensusResult,
         network::{BlockStream, test_network::TestService},
         storage::mem_store::MemStore,
     };
+    use crate::block_header::VerifiedBlock;
 
     struct SubscriberTestClient {}
 
@@ -259,7 +259,7 @@ mod test {
         async fn send_block(
             &self,
             _peer: AuthorityIndex,
-            _block: &VerifiedBlockHeader,
+            _block: &VerifiedBlock,
             _timeout: Duration,
         ) -> ConsensusResult<()> {
             unimplemented!("Unimplemented")

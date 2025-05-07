@@ -23,7 +23,6 @@ pub(crate) trait Store: Send + Sync {
     /// Writes blocks, consensus commits and other data to store atomically.
     fn write(&self, write_batch: WriteBatch) -> ConsensusResult<()>;
 
-    /// Reads blocks for the given refs.
     fn read_blocks(&self, refs: &[BlockRef]) -> ConsensusResult<Vec<Option<VerifiedBlock>>>;
 
     /// Reads blocks headers for the given refs.
@@ -58,6 +57,13 @@ pub(crate) trait Store: Send + Sync {
         before_round: Option<Round>,
     ) -> ConsensusResult<Vec<VerifiedBlock>>;
 
+    #[expect(dead_code)]
+    fn scan_block_headers_by_author(
+        &self,
+        author: AuthorityIndex,
+        start_round: Round,
+    ) -> ConsensusResult<Vec<VerifiedBlockHeader>>;
+
     /// Reads the last commit.
     fn read_last_commit(&self) -> ConsensusResult<Option<TrustedCommit>>;
 
@@ -69,29 +75,27 @@ pub(crate) trait Store: Send + Sync {
 
     /// Reads the last commit info, written atomically with the last commit.
     fn read_last_commit_info(&self) -> ConsensusResult<Option<(CommitRef, CommitInfo)>>;
-    fn scan_block_headers_by_author(
-        &self,
-        author: AuthorityIndex,
-        start_round: Round,
-    ) -> ConsensusResult<Vec<VerifiedBlockHeader>>;
 }
 
 /// Represents data to be written to the store together atomically.
 #[derive(Debug, Default)]
 pub(crate) struct WriteBatch {
-    pub(crate) blocks: Vec<VerifiedBlockHeader>,
+    pub(crate) blocks: Vec<VerifiedBlock>,
+    pub(crate) block_headers: Vec<VerifiedBlockHeader>,
     pub(crate) commits: Vec<TrustedCommit>,
     pub(crate) commit_info: Vec<(CommitRef, CommitInfo)>,
 }
 
 impl WriteBatch {
     pub(crate) fn new(
-        blocks: Vec<VerifiedBlockHeader>,
+        blocks: Vec<VerifiedBlock>,
+        block_headers: Vec<VerifiedBlockHeader>,
         commits: Vec<TrustedCommit>,
         commit_info: Vec<(CommitRef, CommitInfo)>,
     ) -> Self {
         WriteBatch {
             blocks,
+            block_headers,
             commits,
             commit_info,
         }
@@ -100,8 +104,14 @@ impl WriteBatch {
     // Test setters.
 
     #[cfg(test)]
-    pub(crate) fn blocks(mut self, blocks: Vec<VerifiedBlockHeader>) -> Self {
+    pub(crate) fn blocks(mut self, blocks: Vec<VerifiedBlock>) -> Self {
         self.blocks = blocks;
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn block_headers(mut self, block_headers: Vec<VerifiedBlockHeader>) -> Self {
+        self.block_headers = block_headers;
         self
     }
 

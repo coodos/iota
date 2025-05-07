@@ -198,8 +198,8 @@ mod test {
 
     use super::*;
     use crate::{
-        Round, TestBlockHeader, block_header::BlockRef, commit::CommitRange, core::CoreSignals,
-        network::BlockStream,
+        Round, TestBlockHeader, block_header::BlockRef, commit::CommitRange,
+        core::CoreSignals, network::BlockStream,
     };
 
     struct FakeNetworkClient {
@@ -228,7 +228,7 @@ mod test {
         async fn send_block(
             &self,
             peer: AuthorityIndex,
-            block: &VerifiedBlockHeader,
+            block: &VerifiedBlock,
             _timeout: Duration,
         ) -> ConsensusResult<()> {
             let mut blocks_sent = self.blocks_sent.lock();
@@ -284,7 +284,7 @@ mod test {
         let _broadcaster =
             Broadcaster::new(context.clone(), network_client.clone(), &signals_receiver);
 
-        let block = VerifiedBlockHeader::new_for_test(TestBlockHeader::new(9, 1).build());
+        let block = VerifiedBlock::new_for_test(TestBlockHeader::new(9, 1).build());
         assert!(
             core_signals.new_block(block.clone()).is_ok(),
             "No subscriber active to receive the block"

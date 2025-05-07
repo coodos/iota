@@ -1180,6 +1180,7 @@ mod tests {
             MAX_BLOCKS_PER_FETCH, SYNC_MISSING_BLOCK_ROUND_THRESHOLD, Synchronizer,
         },
     };
+    use crate::block_header::VerifiedBlock;
 
     type FetchRequestKey = (Vec<BlockRef>, AuthorityIndex);
     type FetchRequestResponse = (Vec<VerifiedBlockHeader>, Option<Duration>);
@@ -1234,7 +1235,7 @@ mod tests {
         async fn send_block(
             &self,
             _peer: AuthorityIndex,
-            _serialized_block: &VerifiedBlockHeader,
+            _serialized_block: &VerifiedBlock,
             _timeout: Duration,
         ) -> ConsensusResult<()> {
             unimplemented!("Unimplemented")

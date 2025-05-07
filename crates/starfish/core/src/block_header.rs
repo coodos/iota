@@ -630,17 +630,14 @@ impl fmt::Debug for VerifiedBlockHeader {
 }
 
 /// VerifiedTransactions are transactions that correspond to an existing block
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct VerifiedTransactions {
-    #[expect(dead_code)]
     transactions: Vec<Transaction>,
 
     /// The block reference of the block that contains the transactions.
-    #[expect(dead_code)]
     block_ref: BlockRef,
 
     /// The serialized bytes of the transactions.
-    #[expect(dead_code)]
     serialized: Bytes,
 }
 
@@ -660,13 +657,33 @@ impl VerifiedTransactions {
 
 /// VerifiedBlock is a pair of verified block header and transactions. It is
 /// used for streaming and storing
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct VerifiedBlock {
     /// The block header.
     pub verified_block_header: VerifiedBlockHeader,
 
     /// The transactions in the block.
     pub verified_transactions: VerifiedTransactions,
+}
+
+impl VerifiedBlock {
+    #[cfg(test)]
+    pub fn new_for_test(block_header: BlockHeader) -> Self {
+        let verified_block_header = VerifiedBlockHeader::new_for_test(block_header);
+        let verified_transactions = VerifiedTransactions::new(
+            vec![],
+            BlockRef::new(
+                verified_block_header.round(),
+                verified_block_header.author(),
+                verified_block_header.digest(),
+            ),
+            Bytes::new(),
+        );
+        Self {
+            verified_block_header,
+            verified_transactions,
+        }
+    }
 }
 
 /// Allow quick access on the underlying BlockHeader without having to always
@@ -680,7 +697,7 @@ impl Deref for VerifiedBlock {
 }
 /// Generates the genesis blocks for the current Committee.
 /// The blocks are returned in authority index order.
-pub(crate) fn genesis_block_headers(context: Arc<Context>) -> Vec<VerifiedBlock> {
+pub(crate) fn genesis_blocks(context: Arc<Context>) -> Vec<VerifiedBlock> {
     context
         .committee
         .authorities()
@@ -703,6 +720,23 @@ pub(crate) fn genesis_block_headers(context: Arc<Context>) -> Vec<VerifiedBlock>
             }
         })
         .collect::<Vec<VerifiedBlock>>()
+}
+
+pub(crate) fn genesis_block_headers(context: Arc<Context>) -> Vec<VerifiedBlockHeader> {
+    context
+        .committee
+        .authorities()
+        .map(|(authority_index, _)| {
+            let signed_block = SignedBlockHeader::new_genesis(BlockHeader::V1(
+                BlockHeaderV1::genesis_block_header(context.committee.epoch(), authority_index),
+            ));
+            let serialized = signed_block
+                .serialize()
+                .expect("Genesis block serialization failed.");
+            // Unnecessary to verify genesis block headers.
+            VerifiedBlockHeader::new_verified(signed_block, serialized)
+        })
+        .collect::<Vec<VerifiedBlockHeader>>()
 }
 
 /// This struct is public for testing in other crates.

@@ -834,7 +834,7 @@ mod tests {
 
     use crate::{
         CommitConsumerMonitor, CommitDigest, CommitRef, Round,
-        block_header::{BlockRef, TestBlockHeader, VerifiedBlockHeader},
+        block_header::{BlockRef, TestBlockHeader, VerifiedBlock, VerifiedBlockHeader},
         block_verifier::NoopBlockVerifier,
         commit::CommitRange,
         commit_syncer::CommitSyncer,
@@ -857,7 +857,7 @@ mod tests {
         async fn send_block(
             &self,
             _peer: AuthorityIndex,
-            _serialized_block: &VerifiedBlockHeader,
+            _serialized_block: &VerifiedBlock,
             _timeout: Duration,
         ) -> ConsensusResult<()> {
             unimplemented!("Unimplemented")

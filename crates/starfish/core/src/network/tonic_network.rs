@@ -57,6 +57,7 @@ const MAX_TOTAL_FETCHED_BYTES: usize = 128 * 1024 * 1024;
 
 /// SerializedBlock is used to send blocks over the network. It contains
 /// separately the serialized block header and the serialized transactions.
+#[expect(dead_code)]
 pub(crate) struct SerializedBlock {
     serialized_block_header: Bytes,
     serialized_transactions: Bytes,

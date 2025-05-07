@@ -74,6 +74,24 @@ impl Store for MemStore {
             }
         }
 
+        for block_header in write_batch.block_headers {
+            let block_ref = block_header.reference();
+            inner.block_headers.insert(
+                (block_ref.round, block_ref.author, block_ref.digest),
+                block_header.clone(),
+            );
+            inner.digests_by_authorities.insert((
+                block_ref.author,
+                block_ref.round,
+                block_ref.digest,
+            ));
+            for vote in block_header.commit_votes() {
+                inner
+                    .commit_votes
+                    .insert((vote.index, vote.digest, block_ref));
+            }
+        }
+
         for commit in write_batch.commits {
             inner
                 .commits
@@ -128,7 +146,7 @@ impl Store for MemStore {
         &self,
         author: AuthorityIndex,
         start_round: Round,
-    ) -> ConsensusResult<Vec<VerifiedBlockHeader>> {
+    ) -> ConsensusResult<Vec<VerifiedBlock>> {
         let inner = self.inner.read();
         let mut refs = vec![];
         for &(author, round, digest) in inner.digests_by_authorities.range((
@@ -167,7 +185,7 @@ impl Store for MemStore {
         author: AuthorityIndex,
         num_of_rounds: u64,
         before_round: Option<Round>,
-    ) -> ConsensusResult<Vec<VerifiedBlockHeader>> {
+    ) -> ConsensusResult<Vec<VerifiedBlock>> {
         let before_round = before_round.unwrap_or(Round::MAX);
         let mut refs = VecDeque::new();
         for &(author, round, digest) in self
@@ -191,6 +209,15 @@ impl Store for MemStore {
             );
         }
         Ok(blocks)
+    }
+
+    // TODO: implement!
+    fn scan_block_headers_by_author(
+        &self,
+        author: AuthorityIndex,
+        start_round: Round,
+    ) -> ConsensusResult<Vec<VerifiedBlockHeader>> {
+        unimplemented!()
     }
 
     fn read_last_commit(&self) -> ConsensusResult<Option<TrustedCommit>> {

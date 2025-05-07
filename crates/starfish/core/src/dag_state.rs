@@ -20,7 +20,7 @@ use crate::{
     CommittedSubDag,
     block_header::{
         BlockHeaderAPI, BlockHeaderDigest, BlockRef, BlockTimestampMs, GENESIS_ROUND, Round, Slot,
-        VerifiedBlock, VerifiedBlockHeader, genesis_block_headers,
+        VerifiedBlock, VerifiedBlockHeader,
     },
     commit::{
         CommitAPI as _, CommitDigest, CommitIndex, CommitInfo, CommitRef, CommitVote,
@@ -31,6 +31,7 @@ use crate::{
     storage::{Store, WriteBatch},
     threshold_clock::ThresholdClock,
 };
+use crate::block_header::genesis_blocks;
 
 /// DagState provides the API to write and read accepted blocks from the DAG.
 /// Only uncommitted and last committed blocks are cached in memory.
@@ -92,7 +93,8 @@ pub(crate) struct DagState {
     pending_acknowledgments: Vec<BlockRef>,
 
     // Data to be flushed to storage.
-    blocks_to_write: Vec<VerifiedBlockHeader>,
+    blocks_to_write: Vec<VerifiedBlock>,
+    block_headers_to_write: Vec<VerifiedBlockHeader>,
     commits_to_write: Vec<TrustedCommit>,
 
     // Buffer the reputation scores & last_committed_rounds to be flushed with the
@@ -113,7 +115,7 @@ impl DagState {
         let cached_rounds = context.parameters.dag_state_cached_rounds as Round;
         let num_authorities = context.committee.size();
 
-        let genesis = genesis_block_headers(context.clone())
+        let genesis = genesis_blocks(context.clone())
             .into_iter()
             .map(|block| (block.reference(), block))
             .collect();
@@ -177,6 +179,7 @@ impl DagState {
             last_committed_rounds: last_committed_rounds.clone(),
             pending_commit_votes: VecDeque::new(),
             blocks_to_write: vec![],
+            block_headers_to_write: vec![],
             commits_to_write: vec![],
             commit_info_to_write: vec![],
             pending_acknowledgments: vec![],
@@ -217,24 +220,24 @@ impl DagState {
     }
 
     /// Accepts a block into DagState and keeps it in memory.
-    pub(crate) fn accept_block(&mut self, block: VerifiedBlockHeader) {
+    pub(crate) fn accept_block(&mut self, block_header: VerifiedBlockHeader) {
         assert_ne!(
-            block.round(),
+            block_header.round(),
             0,
             "Genesis block should not be accepted into DAG."
         );
 
-        let block_ref = block.reference();
+        let block_ref = block_header.reference();
         if self.contains_block(&block_ref) {
             return;
         }
 
         let now = self.context.clock.timestamp_utc_ms();
-        if block.timestamp_ms() > now {
+        if block_header.timestamp_ms() > now {
             panic!(
                 "Block {:?} cannot be accepted! Block timestamp {} is greater than local timestamp {}.",
-                block,
-                block.timestamp_ms(),
+                block_header,
+                block_header.timestamp_ms(),
                 now,
             );
         }
@@ -245,17 +248,18 @@ impl DagState {
             let existing_blocks = self.get_uncommitted_blocks_at_slot(block_ref.into());
             assert!(
                 existing_blocks.is_empty(),
-                "Block Rejected! Attempted to add block {block:#?} to own slot where \
+                "Block Rejected! Attempted to add block header {block_header:#?} to own slot where \
                 block(s) {existing_blocks:#?} already exists."
             );
         }
-        self.update_block_metadata(&block);
-        self.blocks_to_write.push(block);
+        self.update_block_metadata(&block_header);
+        self.block_headers_to_write.push(block_header);
         let source = if self.context.own_index == block_ref.author {
             "own"
         } else {
             "others"
         };
+        // TODO: rename to accepted block headers?
         self.context
             .metrics
             .node_metrics
@@ -966,6 +970,7 @@ impl DagState {
             .start_timer();
         // Flush buffered data to storage.
         let blocks = std::mem::take(&mut self.blocks_to_write);
+        let block_headers = std::mem::take(&mut self.block_headers_to_write);
         let commits = std::mem::take(&mut self.commits_to_write);
         let commit_info_to_write = std::mem::take(&mut self.commit_info_to_write);
 
@@ -973,9 +978,14 @@ impl DagState {
             return;
         }
         debug!(
-            "Flushing {} blocks ({}), {} commits ({}) and {} commit info ({}) to storage.",
+            "Flushing {} blocks ({}), {} block headers ({}), {} commits ({}) and {} commit info ({}) to storage.",
             blocks.len(),
             blocks.iter().map(|b| b.reference().to_string()).join(","),
+            block_headers.len(),
+            block_headers
+                .iter()
+                .map(|b| b.reference().to_string())
+                .join(","),
             commits.len(),
             commits.iter().map(|c| c.reference().to_string()).join(","),
             commit_info_to_write.len(),
@@ -985,7 +995,12 @@ impl DagState {
                 .join(","),
         );
         self.store
-            .write(WriteBatch::new(blocks, commits, commit_info_to_write))
+            .write(WriteBatch::new(
+                blocks,
+                block_headers,
+                commits,
+                commit_info_to_write,
+            ))
             .unwrap_or_else(|e| panic!("Failed to write to storage: {:?}", e));
         self.context
             .metrics
@@ -1000,6 +1015,7 @@ impl DagState {
             while let Some(block_ref) = self.recent_refs_by_authority[authority_index].first() {
                 if block_ref.round <= eviction_round {
                     self.recent_block_headers.remove(block_ref);
+                    self.recent_blocks.remove(block_ref);
                     self.recent_refs_by_authority[authority_index].pop_first();
                 } else {
                     break;
@@ -1009,9 +1025,10 @@ impl DagState {
         }
 
         let metrics = &self.context.metrics.node_metrics;
+        // TODO: create similar metric for headers?
         metrics
             .dag_state_recent_blocks
-            .set(self.recent_block_headers.len() as i64);
+            .set(self.recent_blocks.len() as i64);
         metrics.dag_state_recent_refs.set(
             self.recent_refs_by_authority
                 .iter()
@@ -1080,7 +1097,7 @@ impl DagState {
             (self.highest_accepted_round.saturating_sub(1)..=self.highest_accepted_round).rev()
         {
             if round == GENESIS_ROUND {
-                return self.genesis_blocks();
+                return self.genesis_block_headers();
             }
             use crate::stake_aggregator::{QuorumThreshold, StakeAggregator};
             let mut quorum = StakeAggregator::<QuorumThreshold>::new();
@@ -1099,8 +1116,17 @@ impl DagState {
     }
 
     #[cfg(test)]
-    pub(crate) fn genesis_blocks(&self) -> Vec<VerifiedBlockHeader> {
+    pub(crate) fn genesis_blocks(&self) -> Vec<VerifiedBlock> {
         self.genesis.values().cloned().collect()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn genesis_block_headers(&self) -> Vec<VerifiedBlockHeader> {
+        self
+            .genesis
+            .values()
+            .map(|b| (**b).clone())
+            .collect::<Vec<VerifiedBlockHeader>>()
     }
 
     #[cfg(test)]
@@ -1129,9 +1155,11 @@ mod test {
         test_dag_builder::DagBuilder,
         test_dag_parser::parse_dag,
     };
+    use crate::block_header::genesis_block_headers;
 
+    //TODO: create similar test for get_block
     #[tokio::test]
-    async fn test_get_blocks() {
+    async fn test_get_block_header() {
         let (context, _) = Context::new_for_test(4);
         let context = Arc::new(context);
         let store = Arc::new(MemStore::new());
@@ -1167,7 +1195,7 @@ mod test {
 
         // Check uncommitted blocks that exist.
         for (r, block) in &blocks {
-            assert_eq!(&dag_state.get_block(r).unwrap(), block);
+            assert_eq!(&dag_state.get_block_header(r).unwrap(), block);
         }
 
         // Check uncommitted blocks that do not exist.
@@ -1415,32 +1443,32 @@ mod test {
         // Create test blocks for round 1 ~ 10
         let num_rounds: u32 = 10;
         let num_authorities: u32 = 4;
-        let mut blocks = Vec::new();
+        let mut block_headers = Vec::new();
 
         for round in 1..=num_rounds {
             for author in 0..num_authorities {
                 let block =
                     VerifiedBlockHeader::new_for_test(TestBlockHeader::new(round, author).build());
-                blocks.push(block);
+                block_headers.push(block);
             }
         }
 
         // Now write in store the blocks from first 4 rounds and the rest to the dag
         // state
-        blocks.clone().into_iter().for_each(|block| {
-            if block.round() <= 4 {
+        block_headers.clone().into_iter().for_each(|block_header| {
+            if block_header.round() <= 4 {
                 store
-                    .write(WriteBatch::default().blocks(vec![block]))
+                    .write(WriteBatch::default().block_headers(vec![block_header]))
                     .unwrap();
             } else {
-                dag_state.accept_blocks(vec![block]);
+                dag_state.accept_blocks(vec![block_header]);
             }
         });
 
         // Now when trying to query whether we have all the blocks, we should
         // successfully retrieve a positive answer where the blocks of first 4
         // round should be found in DagState and the rest in store.
-        let mut block_refs = blocks
+        let mut block_refs = block_headers
             .iter()
             .map(|block| block.reference())
             .collect::<Vec<_>>();
@@ -1590,38 +1618,38 @@ mod test {
         // Create test blocks for round 1 ~ 10
         let num_rounds: u32 = 10;
         let num_authorities: u32 = 4;
-        let mut blocks = Vec::new();
+        let mut block_headers = Vec::new();
 
         for round in 1..=num_rounds {
             for author in 0..num_authorities {
                 let block =
                     VerifiedBlockHeader::new_for_test(TestBlockHeader::new(round, author).build());
-                blocks.push(block);
+                block_headers.push(block);
             }
         }
 
         // Now write in store the blocks from first 4 rounds and the rest to the dag
         // state
-        blocks.clone().into_iter().for_each(|block| {
-            if block.round() <= 4 {
+        block_headers.clone().into_iter().for_each(|block_header| {
+            if block_header.round() <= 4 {
                 store
-                    .write(WriteBatch::default().blocks(vec![block]))
+                    .write(WriteBatch::default().block_headers(vec![block_header]))
                     .unwrap();
             } else {
-                dag_state.accept_blocks(vec![block]);
+                dag_state.accept_blocks(vec![block_header]);
             }
         });
 
         // Now when trying to query whether we have all the blocks, we should
         // successfully retrieve a positive answer where the blocks of first 4
         // round should be found in DagState and the rest in store.
-        let mut block_refs = blocks
+        let mut block_refs = block_headers
             .iter()
             .map(|block| block.reference())
             .collect::<Vec<_>>();
-        let result = dag_state.get_blocks(&block_refs);
+        let result = dag_state.get_block_headers(&block_refs);
 
-        let mut expected = blocks
+        let mut expected = block_headers
             .into_iter()
             .map(Some)
             .collect::<Vec<Option<VerifiedBlockHeader>>>();
@@ -1638,7 +1666,7 @@ mod test {
                 BlockHeaderDigest::default(),
             ),
         );
-        let result = dag_state.get_blocks(&block_refs);
+        let result = dag_state.get_block_headers(&block_refs);
 
         // Then all should be found apart from the last one
         expected.insert(3, None);
@@ -1665,7 +1693,7 @@ mod test {
 
         // Add the blocks from first 5 rounds and first 5 commits to the dag state
         let temp_commits = commits.split_off(5);
-        dag_state.accept_blocks(dag_builder.blocks(1..=5));
+        dag_state.accept_blocks(dag_builder.block_headers(1..=5));
         for commit in commits.clone() {
             dag_state.add_commit(commit);
         }
@@ -1674,23 +1702,23 @@ mod test {
         dag_state.flush();
 
         // Add the rest of the blocks and commits to the dag state
-        dag_state.accept_blocks(dag_builder.blocks(6..=num_rounds));
+        dag_state.accept_blocks(dag_builder.block_headers(6..=num_rounds));
         for commit in temp_commits.clone() {
             dag_state.add_commit(commit);
         }
 
         // All blocks should be found in DagState.
-        let all_blocks = dag_builder.blocks(6..=num_rounds);
-        let block_refs = all_blocks
+        let all_block_headers = dag_builder.block_headers(6..=num_rounds);
+        let block_refs = all_block_headers
             .iter()
             .map(|block| block.reference())
             .collect::<Vec<_>>();
         let result = dag_state
-            .get_blocks(&block_refs)
+            .get_block_headers(&block_refs)
             .into_iter()
             .map(|b| b.unwrap())
             .collect::<Vec<_>>();
-        assert_eq!(result, all_blocks);
+        assert_eq!(result, all_block_headers);
 
         // Last commit index should be 10.
         assert_eq!(dag_state.last_commit_index(), 10);
@@ -1706,26 +1734,26 @@ mod test {
         let dag_state = DagState::new(context.clone(), store.clone());
 
         // Blocks of first 5 rounds should be found in DagState.
-        let blocks = dag_builder.blocks(1..=5);
-        let block_refs = blocks
+        let block_headers = dag_builder.block_headers(1..=5);
+        let block_refs = block_headers
             .iter()
-            .map(|block| block.reference())
+            .map(|block_header| block_header.reference())
             .collect::<Vec<_>>();
         let result = dag_state
-            .get_blocks(&block_refs)
+            .get_block_headers(&block_refs)
             .into_iter()
             .map(|b| b.unwrap())
             .collect::<Vec<_>>();
-        assert_eq!(result, blocks);
+        assert_eq!(result, block_headers);
 
         // Blocks above round 5 should not be in DagState, because they are not flushed.
-        let missing_blocks = dag_builder.blocks(6..=num_rounds);
+        let missing_blocks = dag_builder.block_headers(6..=num_rounds);
         let block_refs = missing_blocks
             .iter()
             .map(|block| block.reference())
             .collect::<Vec<_>>();
         let retrieved_blocks = dag_state
-            .get_blocks(&block_refs)
+            .get_block_headers(&block_refs)
             .into_iter()
             .flatten()
             .collect::<Vec<_>>();
@@ -1839,12 +1867,12 @@ mod test {
         let block = VerifiedBlockHeader::new_for_test(TestBlockHeader::new(2, 2).build());
 
         // Accept all blocks
-        for block in dag_builder
-            .all_blocks()
+        for block_header in dag_builder
+            .all_block_headers()
             .into_iter()
             .chain(std::iter::once(block))
         {
-            dag_state.accept_block(block);
+            dag_state.accept_block(block_header);
         }
 
         dag_state.add_commit(TrustedCommit::new_for_test(
@@ -1860,13 +1888,19 @@ mod test {
         let expected_rounds = vec![0, 1, 2, 3];
         let expected_excluded_and_equivocating_blocks = vec![0, 0, 1, 0];
         // THEN
-        let last_blocks = dag_state.get_last_cached_block_per_authority(end_round);
+        let last_block_headers = dag_state.get_last_cached_block_header_per_authority(end_round);
         assert_eq!(
-            last_blocks.iter().map(|b| b.0.round()).collect::<Vec<_>>(),
+            last_block_headers
+                .iter()
+                .map(|b| b.0.round())
+                .collect::<Vec<_>>(),
             expected_rounds
         );
         assert_eq!(
-            last_blocks.iter().map(|b| b.1.len()).collect::<Vec<_>>(),
+            last_block_headers
+                .iter()
+                .map(|b| b.1.len())
+                .collect::<Vec<_>>(),
             expected_excluded_and_equivocating_blocks
         );
 
@@ -1911,9 +1945,12 @@ mod test {
         let expected_rounds = vec![0, 1, 2, 2];
 
         // THEN
-        let last_blocks = dag_state.get_last_cached_block_per_authority(end_round);
+        let last_block_headers = dag_state.get_last_cached_block_header_per_authority(end_round);
         assert_eq!(
-            last_blocks.iter().map(|b| b.0.round()).collect::<Vec<_>>(),
+            last_block_headers
+                .iter()
+                .map(|b| b.0.round())
+                .collect::<Vec<_>>(),
             expected_rounds
         );
 
@@ -1977,7 +2014,7 @@ mod test {
         // THEN the method should panic, as some authorities have already evicted rounds
         // <= round 2
         let end_round = 2;
-        dag_state.get_last_cached_block_per_authority(end_round);
+        dag_state.get_last_cached_block_header_per_authority(end_round);
     }
 
     #[tokio::test]
@@ -2003,8 +2040,8 @@ mod test {
                 .layers(1..=4)
                 .build()
                 .persist_layers(dag_state.clone());
-            let round_4_blocks: Vec<_> = dag_builder
-                .blocks(4..=4)
+            let round_4_block_headers: Vec<_> = dag_builder
+                .block_headers(4..=4)
                 .into_iter()
                 .map(|block| block.reference())
                 .collect();
@@ -2014,23 +2051,23 @@ mod test {
             assert_eq!(
                 last_quorum
                     .into_iter()
-                    .map(|block| block.reference())
+                    .map(|block_header| block_header.reference())
                     .collect::<Vec<_>>(),
-                round_4_blocks
+                round_4_block_headers
             );
         }
 
         // WHEN adding one more block at round 5, still round 4 should be returned as
         // quorum
         {
-            let block = VerifiedBlockHeader::new_for_test(TestBlockHeader::new(5, 0).build());
-            dag_state.write().accept_block(block);
+            let block_header = VerifiedBlockHeader::new_for_test(TestBlockHeader::new(5, 0).build());
+            dag_state.write().accept_block(block_header);
 
-            let round_4_blocks = dag_state.read().get_uncommitted_blocks_at_round(4);
+            let round_4_block_headers = dag_state.read().get_uncommitted_blocks_at_round(4);
 
             let last_quorum = dag_state.read().last_quorum();
 
-            assert_eq!(last_quorum, round_4_blocks);
+            assert_eq!(last_quorum, round_4_block_headers);
         }
     }
 
@@ -2050,7 +2087,7 @@ mod test {
                 .find(|block| block.author() == context.own_index)
                 .unwrap();
 
-            assert_eq!(dag_state.read().get_last_proposed_block(), my_genesis);
+            assert_eq!(dag_state.read().get_last_proposed_block_header(), my_genesis);
         }
 
         // WHEN adding some blocks for authorities, only the last ones should be

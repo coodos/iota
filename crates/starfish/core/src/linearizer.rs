@@ -19,6 +19,7 @@ use crate::{
 /// been mostly introduced for allowing to inject the test store in
 /// `DagBuilder`.
 pub(crate) trait BlockStoreAPI {
+    #[expect(dead_code)]
     fn get_blocks(&self, refs: &[BlockRef]) -> Vec<Option<VerifiedBlock>>;
     fn get_block_headers(&self, refs: &[BlockRef]) -> Vec<Option<VerifiedBlockHeader>>;
 }
@@ -373,7 +374,7 @@ mod tests {
         // Now retrieve all the blocks up to round leader_round_wave_1 - 1
         // And then only the leader of round leader_round_wave_1
         // Also store those to DagState
-        let mut blocks = dag_builder.blocks(0..=leader_round_wave_1 - 1);
+        let mut blocks = dag_builder.block_headers(0..=leader_round_wave_1 - 1);
         blocks.push(
             dag_builder
                 .leader_block(leader_round_wave_1)
@@ -396,7 +397,7 @@ mod tests {
 
         // Now take all the blocks from round `leader_round_wave_1` up to round
         // `leader_round_wave_2-1`
-        let mut blocks = dag_builder.blocks(leader_round_wave_1..=leader_round_wave_2 - 1);
+        let mut blocks = dag_builder.block_headers(leader_round_wave_1..=leader_round_wave_2 - 1);
         // Filter out leader block of round `leader_round_wave_1`
         blocks.retain(|block| {
             !(block.round() == leader_round_wave_1

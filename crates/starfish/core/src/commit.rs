@@ -647,6 +647,7 @@ mod tests {
         context::Context,
         storage::{WriteBatch, mem_store::MemStore},
     };
+    use crate::block_header::VerifiedBlock;
 
     #[tokio::test]
     async fn test_new_subdag_from_commit() {
@@ -665,7 +666,7 @@ mod tests {
             .map(|index| {
                 let author_idx = index.0.value() as u32;
                 let block = TestBlockHeader::new(0, author_idx).build();
-                VerifiedBlockHeader::new_for_test(block)
+                VerifiedBlock::new_for_test(block)
             })
             .map(|block| (block.reference(), block))
             .unzip();
@@ -679,7 +680,7 @@ mod tests {
             let mut new_ancestors = vec![];
             for author in 0..num_authorities {
                 let base_ts = round as BlockTimestampMs * 1000;
-                let block = VerifiedBlockHeader::new_for_test(
+                let block = VerifiedBlock::new_for_test(
                     TestBlockHeader::new(round, author)
                         .set_timestamp_ms(base_ts + (author + round) as u64)
                         .set_ancestors(ancestors.clone())
