@@ -28,7 +28,7 @@ use crate::{
     Transaction,
     block_header::{
         BlockHeader, BlockHeaderAPI, BlockHeaderV1, BlockRef, BlockTimestampMs, GENESIS_ROUND,
-        Round, SignedBlockHeader, Slot, TransactionsCommitment, VerifiedBlockHeader,
+        Round, SignedBlockHeader, Slot, TransactionsCommitment, VerifiedBlock, VerifiedBlockHeader,
         VerifiedTransactions,
     },
     block_manager::BlockManager,
@@ -44,7 +44,6 @@ use crate::{
         UniversalCommitter, universal_committer_builder::UniversalCommitterBuilder,
     },
 };
-use crate::block_header::VerifiedBlock;
 
 // Maximum number of commit votes to include in a block.
 // TODO: Move to protocol config, and verify in BlockVerifier.
@@ -197,11 +196,11 @@ impl Core {
             .with_label_values(&["Core::recover"])
             .start_timer();
         // Ensure local time is after max ancestor timestamp.
-        let ancestor_blocks = self
+        let ancestor_block_headers = self
             .dag_state
             .read()
-            .get_last_cached_block_per_authority(Round::MAX);
-        let max_ancestor_timestamp = ancestor_blocks
+            .get_last_cached_block_header_per_authority(Round::MAX);
+        let max_ancestor_timestamp = ancestor_block_headers
             .iter()
             .fold(0, |ts, (b, _)| ts.max(b.timestamp_ms()));
         let wait_ms = max_ancestor_timestamp.saturating_sub(self.context.clock.timestamp_utc_ms());
@@ -227,7 +226,8 @@ impl Core {
                     "At minimum a block of round higher than genesis should have been produced during recovery"
                 );
             }
-            let last_proposed_block = last_proposed_block.expect("we should expect Some block due to preliminary check");
+            let last_proposed_block =
+                last_proposed_block.expect("we should expect Some block due to preliminary check");
             // if no new block proposed then just re-broadcast the last proposed one to
             // ensure liveness.
             self.signals.new_block(last_proposed_block.clone()).unwrap();
@@ -830,7 +830,7 @@ impl Core {
         let all_ancestors = self
             .dag_state
             .read()
-            .get_last_cached_block_per_authority(clock_round);
+            .get_last_cached_block_header_per_authority(clock_round);
 
         assert_eq!(
             all_ancestors.len(),

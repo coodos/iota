@@ -20,7 +20,7 @@ use crate::{
     CommittedSubDag,
     block_header::{
         BlockHeaderAPI, BlockHeaderDigest, BlockRef, BlockTimestampMs, GENESIS_ROUND, Round, Slot,
-        VerifiedBlockHeader, genesis_block_headers,
+        VerifiedBlock, VerifiedBlockHeader, genesis_block_headers,
     },
     commit::{
         CommitAPI as _, CommitDigest, CommitIndex, CommitInfo, CommitRef, CommitVote,
@@ -31,7 +31,6 @@ use crate::{
     storage::{Store, WriteBatch},
     threshold_clock::ThresholdClock,
 };
-use crate::block_header::VerifiedBlock;
 
 /// DagState provides the API to write and read accepted blocks from the DAG.
 /// Only uncommitted and last committed blocks are cached in memory.
@@ -47,14 +46,13 @@ pub(crate) struct DagState {
     // The genesis blocks
     genesis: BTreeMap<BlockRef, VerifiedBlock>,
 
-    // Contains recent block headers within CACHED_ROUNDS from the last committed round per authority.
-    // Note: all uncommitted block headers are kept in memory.
+    // Contains recent block headers within CACHED_ROUNDS from the last committed round per
+    // authority. Note: all uncommitted block headers are kept in memory.
     recent_block_headers: BTreeMap<BlockRef, VerifiedBlockHeader>,
 
-    // Contains recent block (together with transactions) within CACHED_ROUNDS from the last committed round per authority.
-    // Note: all uncommitted blocks are kept in memory.
+    // Contains recent block (together with transactions) within CACHED_ROUNDS from the last
+    // committed round per authority. Note: all uncommitted blocks are kept in memory.
     recent_blocks: BTreeMap<BlockRef, VerifiedBlock>,
-
 
     // Indexes recent block refs by their authorities.
     // Vec position corresponds to the authority index.
@@ -305,8 +303,16 @@ impl DagState {
 
     /// Gets a block by checking cached recent blocks then storage.
     /// Returns None when the block is not found.
-    pub(crate) fn get_block(&self, reference: &BlockRef) -> Option<VerifiedBlockHeader> {
+    pub(crate) fn get_block(&self, reference: &BlockRef) -> Option<VerifiedBlock> {
         self.get_blocks(&[*reference])
+            .pop()
+            .expect("Exactly one element should be returned")
+    }
+
+    /// Gets a block header by checking cached recent blocks then storage.
+    /// Returns None when the block is not found.
+    pub(crate) fn get_block_header(&self, reference: &BlockRef) -> Option<VerifiedBlockHeader> {
+        self.get_block_headers(&[*reference])
             .pop()
             .expect("Exactly one element should be returned")
     }
@@ -357,6 +363,57 @@ impl DagState {
         }
 
         blocks
+    }
+
+    /// Gets block headers by checking genesis, cached recent block headers in
+    /// memory, then storage. An element is None when the corresponding
+    /// block header is not found.
+    pub(crate) fn get_block_headers(
+        &self,
+        block_refs: &[BlockRef],
+    ) -> Vec<Option<VerifiedBlockHeader>> {
+        let mut block_headers: Vec<Option<VerifiedBlockHeader>> = vec![None; block_refs.len()];
+        let mut missing_headers = Vec::new();
+        for (index, block_ref) in block_refs.iter().enumerate() {
+            if block_ref.round == GENESIS_ROUND {
+                // Allow the caller to handle the invalid genesis ancestor error.
+                if let Some(block) = self.genesis.get(block_ref) {
+                    block_headers[index] = Some((**block).clone());
+                }
+                continue;
+            }
+            if let Some(block) = self.recent_block_headers.get(block_ref) {
+                block_headers[index] = Some(block.clone());
+                continue;
+            }
+            missing_headers.push((index, block_ref));
+        }
+
+        if missing_headers.is_empty() {
+            return block_headers;
+        }
+
+        let missing_refs = missing_headers
+            .iter()
+            .map(|(_, block_ref)| **block_ref)
+            .collect::<Vec<_>>();
+        let store_results = self
+            .store
+            .read_block_headers(&missing_refs)
+            .unwrap_or_else(|e| panic!("Failed to read from storage: {:?}", e));
+        // TODO:similar metric for header reads count
+        // self.context
+        // .metrics
+        // .node_metrics
+        // .dag_state_store_read_count
+        // .with_label_values(&["get_blocks"])
+        // .inc();
+
+        for ((index, _), result) in missing_headers.into_iter().zip(store_results.into_iter()) {
+            block_headers[index] = result;
+        }
+
+        block_headers
     }
 
     /// Gets all uncommitted blocks in a slot.
@@ -426,8 +483,8 @@ impl DagState {
                 break;
             }
             let block_ref = linked.pop_last().unwrap();
-            let Some(block) = self.get_block(&block_ref) else {
-                panic!("Block {:?} should exist in DAG!", block_ref);
+            let Some(block) = self.get_block_header(&block_ref) else {
+                panic!("Block Header {:?} should exist in DAG!", block_ref);
             };
             linked.extend(block.ancestors().iter().cloned());
         }
@@ -441,7 +498,7 @@ impl DagState {
                 Unbounded,
             ))
             .map(|r| {
-                self.get_block(r)
+                self.get_block_header(r)
                     .unwrap_or_else(|| panic!("Block {:?} should exist in DAG!", r))
                     .clone()
             })
@@ -452,11 +509,12 @@ impl DagState {
     /// If no block is proposed yet, returns the genesis block.
     pub(crate) fn get_last_proposed_block(&self) -> Option<VerifiedBlock> {
         if let Some(last) = self.recent_refs_by_authority[self.context.own_index].last() {
-            return Some(self
-                .recent_blocks
-                .get(last)
-                .expect("Block should be found in recent blocks")
-                .clone());
+            return Some(
+                self.recent_blocks
+                    .get(last)
+                    .expect("Block should be found in recent blocks")
+                    .clone(),
+            );
         }
 
         None
@@ -489,7 +547,7 @@ impl DagState {
             .iter()
             .find(|(block_ref, _)| block_ref.author == authority)
             .expect("Genesis should be found for authority {authority_index}");
-        genesis_block.clone()
+        (**genesis_block).clone()
     }
 
     /// Returns cached recent blocks from the specified authority.
@@ -557,12 +615,16 @@ impl DagState {
     /// earlier rounds. In case of equivocation for an authority's last
     /// slot, one block will be returned (the last in order) and the other
     /// equivocating blocks will be returned.
-    pub(crate) fn get_last_cached_block_per_authority(
+    pub(crate) fn get_last_cached_block_header_per_authority(
         &self,
         end_round: Round,
     ) -> Vec<(VerifiedBlockHeader, Vec<BlockRef>)> {
         // Initialize with the genesis blocks as fallback
-        let mut blocks = self.genesis.values().cloned().collect::<Vec<_>>();
+        let mut block_headers = self
+            .genesis
+            .values()
+            .map(|b| (**b).clone())
+            .collect::<Vec<VerifiedBlockHeader>>();
         let mut equivocating_blocks = vec![vec![]; self.context.committee.size()];
 
         if end_round == GENESIS_ROUND {
@@ -572,7 +634,7 @@ impl DagState {
         }
 
         if end_round == GENESIS_ROUND + 1 {
-            return blocks.into_iter().map(|b| (b, vec![])).collect();
+            return block_headers.into_iter().map(|b| (b, vec![])).collect();
         }
 
         for (authority_index, block_refs) in self.recent_refs_by_authority.iter().enumerate() {
@@ -608,11 +670,11 @@ impl DagState {
             for block_ref in block_ref_iter {
                 if last_round == 0 {
                     last_round = block_ref.round;
-                    let block = self
+                    let block_header = self
                         .recent_block_headers
                         .get(block_ref)
                         .expect("Block should exist in recent blocks");
-                    blocks[authority_index] = block.clone();
+                    block_headers[authority_index] = block_header.clone();
                     continue;
                 }
                 if block_ref.round < last_round {
@@ -622,7 +684,7 @@ impl DagState {
             }
         }
 
-        blocks.into_iter().zip(equivocating_blocks).collect()
+        block_headers.into_iter().zip(equivocating_blocks).collect()
     }
 
     /// Checks whether a block exists in the slot. The method checks only

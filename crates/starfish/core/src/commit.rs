@@ -421,10 +421,10 @@ pub fn load_committed_subdag_from_store(
     reputation_scores_desc: Vec<(AuthorityIndex, u64)>,
 ) -> CommittedSubDag {
     let mut leader_block_idx = None;
-    let commit_blocks = store
-        .read_blocks(commit.blocks())
+    let commit_block_headers = store
+        .read_block_headers(commit.blocks())
         .expect("We should have the block referenced in the commit data");
-    let blocks = commit_blocks
+    let block_headers = commit_block_headers
         .into_iter()
         .enumerate()
         .map(|(idx, commit_block_opt)| {
@@ -437,10 +437,10 @@ pub fn load_committed_subdag_from_store(
         })
         .collect::<Vec<_>>();
     let leader_block_idx = leader_block_idx.expect("Leader block must be in the sub-dag");
-    let leader_block_ref = blocks[leader_block_idx].reference();
+    let leader_block_ref = block_headers[leader_block_idx].reference();
     CommittedSubDag::new(
         leader_block_ref,
-        blocks,
+        block_headers,
         commit.timestamp_ms(),
         commit.reference(),
         reputation_scores_desc,

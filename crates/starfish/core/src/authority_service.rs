@@ -16,7 +16,7 @@ use tracing::{debug, info, warn};
 
 use crate::{
     BlockHeaderAPI, CommitIndex, Round, VerifiedBlockHeader,
-    block_header::{BlockRef, GENESIS_ROUND, SignedBlockHeader},
+    block_header::{BlockRef, GENESIS_ROUND, SignedBlockHeader, VerifiedBlock},
     block_verifier::BlockVerifier,
     commit::{CommitAPI as _, CommitRange, TrustedCommit},
     commit_vote_monitor::CommitVoteMonitor,
@@ -29,7 +29,6 @@ use crate::{
     storage::Store,
     synchronizer::SynchronizerHandle,
 };
-use crate::block_header::VerifiedBlock;
 
 pub(crate) const COMMIT_LAG_MULTIPLIER: u32 = 5;
 
@@ -379,7 +378,7 @@ impl<C: CoreThreadDispatcher> NetworkService for AuthorityService<C> {
         }
         let certifier_blocks = self
             .store
-            .read_blocks(&certifier_block_refs)?
+            .read_block_headers(&certifier_block_refs)?
             .into_iter()
             .flatten()
             .collect();
@@ -442,13 +441,13 @@ impl<C: CoreThreadDispatcher> NetworkService for AuthorityService<C> {
 
         let mut highest_received_rounds = self.core_dispatcher.highest_received_rounds();
 
-        let blocks = self
+        let block_headers = self
             .dag_state
             .read()
-            .get_last_cached_block_per_authority(Round::MAX);
-        let highest_accepted_rounds = blocks
+            .get_last_cached_block_header_per_authority(Round::MAX);
+        let highest_accepted_rounds = block_headers
             .into_iter()
-            .map(|(block, _)| block.round())
+            .map(|(block_headers, _)| block_headers.round())
             .collect::<Vec<_>>();
 
         // Own blocks do not go through the core dispatcher, so they need to be set
@@ -648,7 +647,8 @@ mod tests {
         Round,
         authority_service::AuthorityService,
         block_header::{
-            BlockHeaderAPI, BlockRef, SignedBlockHeader, TestBlockHeader, VerifiedBlockHeader,
+            BlockHeaderAPI, BlockRef, SignedBlockHeader, TestBlockHeader, VerifiedBlock,
+            VerifiedBlockHeader,
         },
         commit::{CertifiedCommits, CommitRange},
         commit_vote_monitor::CommitVoteMonitor,
@@ -661,7 +661,6 @@ mod tests {
         synchronizer::Synchronizer,
         test_dag_builder::DagBuilder,
     };
-    use crate::block_header::VerifiedBlock;
 
     struct FakeCoreThreadDispatcher {
         blocks: Mutex<Vec<VerifiedBlockHeader>>,

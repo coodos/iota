@@ -31,12 +31,11 @@ use starfish_config::{AuthorityIndex, NetworkKeyPair};
 
 use crate::{
     Round, VerifiedBlockHeader,
-    block_header::BlockRef,
+    block_header::{BlockRef, VerifiedBlock},
     commit::{CommitRange, TrustedCommit},
     context::Context,
     error::ConsensusResult,
 };
-use crate::block_header::VerifiedBlock;
 
 // Tonic generated RPC stubs.
 mod tonic_gen {

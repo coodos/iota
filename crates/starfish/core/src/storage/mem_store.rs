@@ -13,7 +13,8 @@ use starfish_config::AuthorityIndex;
 use super::{Store, WriteBatch};
 use crate::{
     block_header::{
-        BlockHeaderAPI as _, BlockHeaderDigest, BlockRef, Round, Slot, VerifiedBlockHeader,
+        BlockHeaderAPI as _, BlockHeaderDigest, BlockRef, Round, Slot, VerifiedBlock,
+        VerifiedBlockHeader,
     },
     commit::{
         CommitAPI as _, CommitDigest, CommitIndex, CommitInfo, CommitRange, CommitRef,
@@ -21,7 +22,6 @@ use crate::{
     },
     error::ConsensusResult,
 };
-use crate::block_header::VerifiedBlock;
 
 /// In-memory storage for testing.
 pub(crate) struct MemStore {
@@ -94,6 +94,23 @@ impl Store for MemStore {
         let blocks = refs
             .iter()
             .map(|r| inner.blocks.get(&(r.round, r.author, r.digest)).cloned())
+            .collect();
+        Ok(blocks)
+    }
+
+    fn read_block_headers(
+        &self,
+        refs: &[BlockRef],
+    ) -> ConsensusResult<Vec<Option<VerifiedBlockHeader>>> {
+        let inner = self.inner.read();
+        let blocks = refs
+            .iter()
+            .map(|r| {
+                inner
+                    .block_headers
+                    .get(&(r.round, r.author, r.digest))
+                    .cloned()
+            })
             .collect();
         Ok(blocks)
     }

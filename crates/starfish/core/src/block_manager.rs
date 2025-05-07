@@ -230,7 +230,7 @@ impl BlockManager {
         let mut blocks_to_reject: BTreeMap<BlockRef, VerifiedBlockHeader> = BTreeMap::new();
         {
             'block: for b in unsuspended_blocks {
-                let ancestors = self.dag_state.read().get_blocks(b.ancestors());
+                let ancestors = self.dag_state.read().get_block_headers(b.ancestors());
                 assert_eq!(b.ancestors().len(), ancestors.len());
                 let mut ancestor_blocks = vec![];
                 'ancestor: for (ancestor_ref, found) in

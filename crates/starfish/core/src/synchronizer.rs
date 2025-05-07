@@ -624,12 +624,12 @@ impl<C: NetworkClient, V: BlockVerifier, D: CoreThreadDispatcher> Synchronizer<C
         dag_state: Arc<RwLock<DagState>>,
         context: &Arc<Context>,
     ) -> Vec<Round> {
-        let blocks = dag_state
+        let block_headers = dag_state
             .read()
-            .get_last_cached_block_per_authority(Round::MAX);
-        assert_eq!(blocks.len(), context.committee.size());
+            .get_last_cached_block_header_per_authority(Round::MAX);
+        assert_eq!(block_headers.len(), context.committee.size());
 
-        blocks
+        block_headers
             .into_iter()
             .map(|(block, _)| block.round())
             .collect::<Vec<_>>()

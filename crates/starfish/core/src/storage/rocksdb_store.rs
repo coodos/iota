@@ -17,13 +17,12 @@ use typed_store::{
 use super::{CommitInfo, Store, WriteBatch};
 use crate::{
     block_header::{
-        BlockHeaderAPI as _, BlockHeaderDigest, BlockRef, Round, SignedBlockHeader,
-        VerifiedBlockHeader,
+        BlockHeaderAPI as _, BlockHeaderDigest, BlockRef, Round, SignedBlockHeader, VerifiedBlock,
+        VerifiedBlockHeader, VerifiedTransactions,
     },
     commit::{CommitAPI as _, CommitDigest, CommitIndex, CommitRange, CommitRef, TrustedCommit},
     error::{ConsensusError, ConsensusResult},
 };
-use crate::block_header::{VerifiedBlock, VerifiedTransactions};
 
 /// Persistent storage with RocksDB.
 pub(crate) struct RocksDBStore {
@@ -166,19 +165,27 @@ impl Store for RocksDBStore {
                 let block = VerifiedBlockHeader::new_verified(signed_block, serialized);
                 // Makes sure block data is not corrupted, by comparing digests.
                 assert_eq!(*key, block.reference());
-                blocks.push(Some(
-                    VerifiedBlock{
-                        verified_block_header: block.clone(),
-                        verified_transactions: VerifiedTransactions::new(vec![],
-                            block.reference(),
-                            Bytes::new(),
-                        )                        
-                    }));
+                blocks.push(Some(VerifiedBlock {
+                    verified_block_header: block.clone(),
+                    verified_transactions: VerifiedTransactions::new(
+                        vec![],
+                        block.reference(),
+                        Bytes::new(),
+                    ),
+                }));
             } else {
                 blocks.push(None);
             }
         }
         Ok(blocks)
+    }
+
+    // TODO: change after implementing the storage
+    fn read_block_headers(
+        &self,
+        _refs: &[BlockRef],
+    ) -> ConsensusResult<Vec<Option<VerifiedBlockHeader>>> {
+        unimplemented!()
     }
 
     fn contains_blocks(&self, refs: &[BlockRef]) -> ConsensusResult<Vec<bool>> {
@@ -202,11 +209,34 @@ impl Store for RocksDBStore {
         Ok(found)
     }
 
-    fn scan_blocks_by_author(
+    fn scan_block_headers_by_author(
         &self,
         author: AuthorityIndex,
         start_round: Round,
     ) -> ConsensusResult<Vec<VerifiedBlockHeader>> {
+        let mut refs = vec![];
+        for kv in self.digests_by_authorities.safe_range_iter((
+            Included((author, start_round, BlockHeaderDigest::MIN)),
+            Included((author, Round::MAX, BlockHeaderDigest::MAX)),
+        )) {
+            let ((author, round, digest), _) = kv?;
+            refs.push(BlockRef::new(round, author, digest));
+        }
+        let results = self.read_block_headers(refs.as_slice())?;
+        let mut block_headers = Vec::with_capacity(refs.len());
+        for (r, block) in refs.into_iter().zip(results.into_iter()) {
+            block_headers.push(
+                block.unwrap_or_else(|| panic!("Storage inconsistency: block {:?} not found!", r)),
+            );
+        }
+        Ok(block_headers)
+    }
+
+    fn scan_blocks_by_author(
+        &self,
+        author: AuthorityIndex,
+        start_round: Round,
+    ) -> ConsensusResult<Vec<VerifiedBlock>> {
         let mut refs = vec![];
         for kv in self.digests_by_authorities.safe_range_iter((
             Included((author, start_round, BlockHeaderDigest::MIN)),
@@ -234,7 +264,7 @@ impl Store for RocksDBStore {
         author: AuthorityIndex,
         num_of_rounds: u64,
         before_round: Option<Round>,
-    ) -> ConsensusResult<Vec<VerifiedBlockHeader>> {
+    ) -> ConsensusResult<Vec<VerifiedBlock>> {
         let before_round = before_round.unwrap_or(Round::MAX);
         let mut refs = std::collections::VecDeque::new();
         for kv in self

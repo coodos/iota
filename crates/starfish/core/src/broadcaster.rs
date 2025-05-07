@@ -18,10 +18,9 @@ use tokio::{
 use tracing::{trace, warn};
 
 use crate::{
-    BlockHeaderAPI, context::Context, core::CoreSignalsReceivers,
+    BlockHeaderAPI, block_header::VerifiedBlock, context::Context, core::CoreSignalsReceivers,
     error::ConsensusResult, network::NetworkClient,
 };
-use crate::block_header::VerifiedBlock;
 
 /// Number of Blocks that can be inflight sending to a peer.
 const BROADCAST_CONCURRENCY: usize = 10;
@@ -106,11 +105,7 @@ impl Broadcaster {
             peer: AuthorityIndex,
             rtt_estimate: Duration,
             block: VerifiedBlock,
-        ) -> (
-            Result<ConsensusResult<()>, Elapsed>,
-            Instant,
-            VerifiedBlock,
-        ) {
+        ) -> (Result<ConsensusResult<()>, Elapsed>, Instant, VerifiedBlock) {
             let start = Instant::now();
             let req_timeout = rtt_estimate.mul_f64(TIMEOUT_THRESHOLD_MULTIPLIER);
             // Use a minimum timeout of 5s so the receiver does not terminate the request

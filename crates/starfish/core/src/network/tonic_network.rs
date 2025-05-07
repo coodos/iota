@@ -37,7 +37,7 @@ use super::{
 };
 use crate::{
     CommitIndex, Round,
-    block_header::{BlockRef},
+    block_header::{BlockRef, VerifiedBlock},
     commit::CommitRange,
     context::Context,
     error::{ConsensusError, ConsensusResult},
@@ -46,7 +46,6 @@ use crate::{
         tonic_tls::create_rustls_server_config,
     },
 };
-use crate::block_header::VerifiedBlock;
 
 // Maximum bytes size in a single fetch_blocks()response.
 // TODO: put max RPC response size in protocol config.
@@ -56,8 +55,8 @@ const MAX_FETCH_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 // the responses.
 const MAX_TOTAL_FETCHED_BYTES: usize = 128 * 1024 * 1024;
 
-/// SerializedBlock is used to send blocks over the network. It contains separately
-/// the serialized block header and the serialized transactions. 
+/// SerializedBlock is used to send blocks over the network. It contains
+/// separately the serialized block header and the serialized transactions.
 pub(crate) struct SerializedBlock {
     serialized_block_header: Bytes,
     serialized_transactions: Bytes,
@@ -250,7 +249,7 @@ impl NetworkClient for TonicClient {
             .await
             .map_err(|e| ConsensusError::NetworkRequest(format!("fetch_commits failed: {e:?}")))?;
         let response = response.into_inner();
-        Ok((response.commits, response.certifier_blocks))
+        Ok((response.commits, response.certifier_block_headers))
     }
 
     async fn fetch_latest_blocks(
@@ -542,7 +541,7 @@ impl<S: NetworkService> ConsensusService for TonicServiceProxy<S> {
             return Err(tonic::Status::internal("PeerInfo not found"));
         };
         let request = request.into_inner();
-        let (commits, certifier_blocks) = self
+        let (commits, certifier_block_headers) = self
             .service
             .handle_fetch_commits(peer_index, (request.start..=request.end).into())
             .await
@@ -551,13 +550,13 @@ impl<S: NetworkService> ConsensusService for TonicServiceProxy<S> {
             .into_iter()
             .map(|c| c.serialized().clone())
             .collect();
-        let certifier_blocks = certifier_blocks
+        let certifier_block_headers = certifier_block_headers
             .into_iter()
             .map(|b| b.serialized().clone())
             .collect();
         Ok(Response::new(FetchCommitsResponse {
             commits,
-            certifier_blocks,
+            certifier_block_headers,
         }))
     }
 
@@ -1053,9 +1052,9 @@ pub(crate) struct FetchCommitsResponse {
     // Serialized consecutive Commit.
     #[prost(bytes = "bytes", repeated, tag = "1")]
     commits: Vec<Bytes>,
-    // Serialized SignedBlock that certify the last commit from above.
+    // Serialized SignedBlockHeader that certify the last commit from above.
     #[prost(bytes = "bytes", repeated, tag = "2")]
-    certifier_blocks: Vec<Bytes>,
+    certifier_block_headers: Vec<Bytes>,
 }
 
 #[derive(Clone, prost::Message)]

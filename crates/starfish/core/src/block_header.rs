@@ -658,7 +658,8 @@ impl VerifiedTransactions {
     }
 }
 
-/// VerifiedBlock is a pair of verified block header and transactions. It is used for streaming and storing
+/// VerifiedBlock is a pair of verified block header and transactions. It is
+/// used for streaming and storing
 #[derive(Clone, Debug)]
 pub struct VerifiedBlock {
     /// The block header.
@@ -691,15 +692,16 @@ pub(crate) fn genesis_block_headers(context: Arc<Context>) -> Vec<VerifiedBlock>
                 .serialize()
                 .expect("Genesis block serialization failed.");
             // Unnecessary to verify genesis block headers.
-            let verified_block_header =  VerifiedBlockHeader::new_verified(signed_block, serialized);
-            VerifiedBlock{
+            let verified_block_header = VerifiedBlockHeader::new_verified(signed_block, serialized);
+            VerifiedBlock {
                 verified_block_header: verified_block_header.clone(),
-                verified_transactions: VerifiedTransactions{
+                verified_transactions: VerifiedTransactions {
                     transactions: vec![],
                     block_ref: verified_block_header.reference(),
                     serialized: Bytes::new(),
                 },
-        }})
+            }
+        })
         .collect::<Vec<VerifiedBlock>>()
 }
 

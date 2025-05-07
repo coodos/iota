@@ -8,19 +8,19 @@ use parking_lot::RwLock;
 use starfish_config::AuthorityIndex;
 
 use crate::{
-    block_header::{BlockHeaderAPI, BlockRef, VerifiedBlockHeader},
+    block_header::{BlockHeaderAPI, BlockRef, VerifiedBlock, VerifiedBlockHeader},
     commit::{Commit, CommittedSubDag, TrustedCommit, sort_sub_dag_blocks},
     context::Context,
     dag_state::DagState,
     leader_schedule::LeaderSchedule,
 };
-use crate::block_header::VerifiedBlock;
 
 /// The `StorageAPI` trait provides an interface for the block store and has
 /// been mostly introduced for allowing to inject the test store in
 /// `DagBuilder`.
 pub(crate) trait BlockStoreAPI {
-    fn get_blocks(&self, refs: &[BlockRef]) -> Vec<Option<VerifiedBlockHeader>>;
+    fn get_blocks(&self, refs: &[BlockRef]) -> Vec<Option<VerifiedBlock>>;
+    fn get_block_headers(&self, refs: &[BlockRef]) -> Vec<Option<VerifiedBlockHeader>>;
 }
 
 impl BlockStoreAPI
@@ -28,6 +28,9 @@ impl BlockStoreAPI
 {
     fn get_blocks(&self, refs: &[BlockRef]) -> Vec<Option<VerifiedBlock>> {
         DagState::get_blocks(self, refs)
+    }
+    fn get_block_headers(&self, refs: &[BlockRef]) -> Vec<Option<VerifiedBlockHeader>> {
+        DagState::get_block_headers(self, refs)
     }
 }
 
@@ -127,7 +130,7 @@ impl Linearizer {
             to_commit.push(x.clone());
 
             let ancestors: Vec<VerifiedBlockHeader> = dag_state
-                .get_blocks(
+                .get_block_headers(
                     &x.ancestors()
                         .iter()
                         .copied()

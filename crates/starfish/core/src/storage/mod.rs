@@ -13,7 +13,7 @@ use starfish_config::AuthorityIndex;
 
 use crate::{
     CommitIndex,
-    block_header::{BlockRef, Round, VerifiedBlockHeader},
+    block_header::{BlockRef, Round, VerifiedBlock, VerifiedBlockHeader},
     commit::{CommitInfo, CommitRange, CommitRef, TrustedCommit},
     error::ConsensusResult,
 };
@@ -25,6 +25,12 @@ pub(crate) trait Store: Send + Sync {
 
     /// Reads blocks for the given refs.
     fn read_blocks(&self, refs: &[BlockRef]) -> ConsensusResult<Vec<Option<VerifiedBlock>>>;
+
+    /// Reads blocks headers for the given refs.
+    fn read_block_headers(
+        &self,
+        refs: &[BlockRef],
+    ) -> ConsensusResult<Vec<Option<VerifiedBlockHeader>>>;
 
     /// Checks if blocks exist in the store.
     fn contains_blocks(&self, refs: &[BlockRef]) -> ConsensusResult<Vec<bool>>;
@@ -38,7 +44,7 @@ pub(crate) trait Store: Send + Sync {
         &self,
         authority: AuthorityIndex,
         start_round: Round,
-    ) -> ConsensusResult<Vec<VerifiedBlockHeader>>;
+    ) -> ConsensusResult<Vec<VerifiedBlock>>;
 
     // The method returns the last `num_of_rounds` rounds blocks by author in round
     // ascending order. When a `before_round` is defined then the blocks of
@@ -50,7 +56,7 @@ pub(crate) trait Store: Send + Sync {
         author: AuthorityIndex,
         num_of_rounds: u64,
         before_round: Option<Round>,
-    ) -> ConsensusResult<Vec<VerifiedBlockHeader>>;
+    ) -> ConsensusResult<Vec<VerifiedBlock>>;
 
     /// Reads the last commit.
     fn read_last_commit(&self) -> ConsensusResult<Option<TrustedCommit>>;
@@ -63,6 +69,11 @@ pub(crate) trait Store: Send + Sync {
 
     /// Reads the last commit info, written atomically with the last commit.
     fn read_last_commit_info(&self) -> ConsensusResult<Option<(CommitRef, CommitInfo)>>;
+    fn scan_block_headers_by_author(
+        &self,
+        author: AuthorityIndex,
+        start_round: Round,
+    ) -> ConsensusResult<Vec<VerifiedBlockHeader>>;
 }
 
 /// Represents data to be written to the store together atomically.
