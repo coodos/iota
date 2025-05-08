@@ -134,7 +134,12 @@ impl NetworkClient for TonicClient {
             .take_while(|b| futures::future::ready(b.is_ok()))
             .filter_map(move |b| async move {
                 match b {
-                    Ok(response) => Some(response.serialized_block),
+                    Ok(response) => Some(
+                        SerializedBlock{
+                            serialized_block_header: response.serialized_block_header,
+                            serialized_transactions: response.serialized_transactions,
+                        }
+                    ),
                     Err(e) => {
                         debug!("Network error received from {}: {e:?}", peer);
                         None
@@ -147,13 +152,14 @@ impl NetworkClient for TonicClient {
         Ok(rate_limited_stream)
     }
 
+    // Returns a pair of vectors of serialized block headers and transactions
     async fn fetch_blocks(
         &self,
         peer: AuthorityIndex,
         block_refs: Vec<BlockRef>,
         highest_accepted_rounds: Vec<Round>,
         timeout: Duration,
-    ) -> ConsensusResult<Vec<Bytes>> {
+    ) -> ConsensusResult<(Vec<Bytes>,Vec<Bytes>)> {
         let mut client = self.get_client(peer, timeout).await?;
         let mut request = Request::new(FetchBlocksRequest {
             block_refs: block_refs
@@ -180,15 +186,20 @@ impl NetworkClient for TonicClient {
                 }
             })?
             .into_inner();
-        let mut blocks = vec![];
+        let mut vec_serialized_block_header = vec![];
+        let mut vec_serialized_transactions = vec![];
         let mut total_fetched_bytes = 0;
         loop {
             match stream.message().await {
                 Ok(Some(response)) => {
-                    for b in &response.blocks {
+                    for b in &response.vec_serialized_block_header {
                         total_fetched_bytes += b.len();
                     }
-                    blocks.extend(response.blocks);
+                    for b in &response.vec_serialized_transactions {
+                        total_fetched_bytes += b.len();
+                    }
+                    vec_serialized_block_header.extend(response.vec_serialized_block_header);
+                    vec_serialized_transactions.extend(response.vec_serialized_transactions);
                     if total_fetched_bytes > MAX_TOTAL_FETCHED_BYTES {
                         info!(
                             "fetch_blocks() fetched bytes exceeded limit: {} > {}, terminating stream.",
@@ -201,7 +212,7 @@ impl NetworkClient for TonicClient {
                     break;
                 }
                 Err(e) => {
-                    if blocks.is_empty() {
+                    if vec_serialized_block_header.is_empty() {
                         if e.code() == tonic::Code::DeadlineExceeded {
                             return Err(ConsensusError::NetworkRequestTimeout(format!(
                                 "fetch_blocks failed mid-stream: {e:?}"
@@ -217,7 +228,7 @@ impl NetworkClient for TonicClient {
                 }
             }
         }
-        Ok(blocks)
+        Ok((vec_serialized_block_header, vec_serialized_transactions))
     }
 
     async fn fetch_commits(
@@ -469,7 +480,9 @@ impl<S: NetworkService> ConsensusService for TonicServiceProxy<S> {
             .handle_subscribe_blocks(peer_index, first_request.last_received_round)
             .await
             .map_err(|e| tonic::Status::internal(format!("{e:?}")))?
-            .map(|block| Ok(SubscribeBlocksResponse { serialized_block: block }));
+            .map(|block| Ok(SubscribeBlocksResponse { 
+                serialized_block: block 
+            }));
         let rate_limited_stream =
             tokio_stream::StreamExt::throttle(stream, self.context.parameters.min_round_delay / 2)
                 .boxed();
@@ -1008,7 +1021,9 @@ pub(crate) struct SubscribeBlocksRequest {
 #[derive(Clone, prost::Message)]
 pub(crate) struct SubscribeBlocksResponse {
     #[prost(bytes = "bytes", tag = "1")]
-    serialized_block: SerializedBlock,
+    serialized_block_header: Bytes,
+    #[prost(bytes = "bytes", tag = "2")]
+    serialized_transactions: Bytes,
 }
 
 #[derive(Clone, prost::Message)]
@@ -1023,9 +1038,10 @@ pub(crate) struct FetchBlocksRequest {
 
 #[derive(Clone, prost::Message)]
 pub(crate) struct FetchBlocksResponse {
-    // The response of the requested blocks as Serialized SignedBlock.
     #[prost(bytes = "bytes", repeated, tag = "1")]
-    blocks: Vec<Bytes>,
+    vec_serialized_block_header: Vec<Bytes>,
+    #[prost(bytes = "bytes", repeated, tag = "2")]
+    vec_serialized_transactions: Vec<Bytes>,
 }
 
 #[derive(Clone, prost::Message)]
@@ -1054,9 +1070,10 @@ pub(crate) struct FetchLatestBlocksRequest {
 
 #[derive(Clone, prost::Message)]
 pub(crate) struct FetchLatestBlocksResponse {
-    // The response of the requested blocks as Serialized SignedBlock.
     #[prost(bytes = "bytes", repeated, tag = "1")]
-    blocks: Vec<Bytes>,
+    vec_serialized_block_header: Vec<Bytes>,
+    #[prost(bytes = "bytes", repeated, tag = "2")]
+    vec_serialized_transactions: Vec<Bytes>,
 }
 
 #[derive(Clone, prost::Message)]

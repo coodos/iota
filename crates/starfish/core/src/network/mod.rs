@@ -27,15 +27,10 @@ use std::{pin::Pin, sync::Arc, time::Duration};
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures::Stream;
+use serde::{Deserialize, Serialize};
 use starfish_config::{AuthorityIndex, NetworkKeyPair};
 
-use crate::{
-    Round, VerifiedBlockHeader,
-    block_header::{BlockRef, VerifiedBlock},
-    commit::{CommitRange, TrustedCommit},
-    context::Context,
-    error::ConsensusResult,
-};
+use crate::{Round, VerifiedBlockHeader, block_header::{BlockRef, VerifiedBlock}, commit::{CommitRange, TrustedCommit}, context::Context, error::ConsensusResult, Transaction};
 
 // Tonic generated RPC stubs.
 mod tonic_gen {
@@ -147,7 +142,7 @@ pub(crate) trait NetworkService: Send + Sync + 'static {
         peer: AuthorityIndex,
         block_refs: Vec<BlockRef>,
         highest_accepted_rounds: Vec<Round>,
-    ) -> ConsensusResult<Vec<SerializedBlock>>;
+    ) -> ConsensusResult<Vec<Bytes>>;
 
     /// Handles the request to fetch commits by index range from the peer.
     async fn handle_fetch_commits(
@@ -194,10 +189,25 @@ where
 }
 
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub(crate) struct SerializedBlock {
     pub(crate) serialized_block_header: Bytes,
     pub(crate) serialized_transactions: Bytes,
+}
+
+impl SerializedBlock {
+    /// Serializes the `SerializedBlock` to BCS-encoded bytes.
+
+    pub(crate) fn serialize(&self) -> Result<Bytes, bcs::Error> {
+        let bytes = bcs::to_bytes(self)?;
+        Ok(bytes.into())
+    }
+
+    /// Deserializes a `SerializedBlock` from BCS-encoded bytes.
+    pub(crate) fn deserialize(serialized_bytes: &Bytes) -> Result<SerializedBlock, bcs::Error> {
+        let serialized_block = bcs::from_bytes(serialized_bytes)?;
+        Ok(serialized_block)
+    }
 }
 
 impl From<VerifiedBlock> for SerializedBlock {

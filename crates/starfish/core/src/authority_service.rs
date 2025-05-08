@@ -9,6 +9,7 @@ use bytes::Bytes;
 use futures::{Stream, StreamExt, ready, stream, task};
 use iota_macros::fail_point_async;
 use parking_lot::RwLock;
+use serde::Serialize;
 use starfish_config::AuthorityIndex;
 use tokio::{sync::broadcast, time::sleep};
 use tokio_util::sync::ReusableBoxFuture;
@@ -276,7 +277,7 @@ impl<C: CoreThreadDispatcher> NetworkService for AuthorityService<C> {
         peer: AuthorityIndex,
         block_refs: Vec<BlockRef>,
         highest_accepted_rounds: Vec<Round>,
-    ) -> ConsensusResult<Vec<SerializedBlock> > {
+    ) -> ConsensusResult<Vec<Bytes> > {
         fail_point_async!("consensus-rpc-response");
 
         const MAX_ADDITIONAL_BLOCKS: usize = 10;
@@ -331,7 +332,7 @@ impl<C: CoreThreadDispatcher> NetworkService for AuthorityService<C> {
             .into_iter()
             .chain(ancestor_blocks)
             .flatten()
-            .map(|block| SerializedBlock::from(block))
+            .map(|block| SerializedBlock::from(block).serialize().expect("we should expect correct serialization from Verified Block"))
             .collect::<Vec<_>>();
 
         Ok(result)
