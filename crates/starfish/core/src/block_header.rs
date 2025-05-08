@@ -667,6 +667,12 @@ pub struct VerifiedBlock {
 }
 
 impl VerifiedBlock {
+    pub fn new(verified_block_header: VerifiedBlockHeader, verified_transactions: VerifiedTransactions ) -> Self {
+        Self {
+            verified_block_header,
+            verified_transactions,
+        }
+    }
     #[cfg(test)]
     pub fn new_for_test(block_header: BlockHeader) -> Self {
         let verified_block_header = VerifiedBlockHeader::new_for_test(block_header);
@@ -683,6 +689,11 @@ impl VerifiedBlock {
             verified_block_header,
             verified_transactions,
         }
+    }
+
+    // This functions returns a pair of serialized block header and serialized transactions
+    pub fn serialized(&self) -> (&Bytes, &Bytes) {
+        (&self.verified_block_header.serialized, &self.verified_transactions.serialized)
     }
 }
 

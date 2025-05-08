@@ -20,6 +20,12 @@ pub(crate) enum ConsensusError {
     #[error("Error deserializing block: {0}")]
     MalformedBlock(bcs::Error),
 
+    #[error("Error deserializing block header: {0}")]
+    MalformedBlockHeader(bcs::Error),
+
+    #[error("Error deserializing block transactions: {0}")]
+    MalformedTransactions(bcs::Error),
+
     #[error("Error deserializing commit: {0}")]
     MalformedCommit(bcs::Error),
 

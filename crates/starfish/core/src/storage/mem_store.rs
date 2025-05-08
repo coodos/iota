@@ -62,6 +62,10 @@ impl Store for MemStore {
                 (block_ref.round, block_ref.author, block_ref.digest),
                 block.clone(),
             );
+            inner.block_headers.insert(
+                (block_ref.round, block_ref.author, block_ref.digest),
+                block.verified_block_header.clone(),
+            );
             inner.digests_by_authorities.insert((
                 block_ref.author,
                 block_ref.round,

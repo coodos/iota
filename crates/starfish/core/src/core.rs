@@ -217,7 +217,7 @@ impl Core {
         self.try_commit().unwrap();
         let last_proposed_block = if let Some(last_proposed_block) = self.try_propose(true).unwrap()
         {
-            last_proposed_block
+            Some(last_proposed_block)
         } else {
             let last_proposed_block = self.dag_state.read().get_last_proposed_block();
             if self.should_propose() {
@@ -226,12 +226,15 @@ impl Core {
                     "At minimum a block of round higher than genesis should have been produced during recovery"
                 );
             }
-            let last_proposed_block =
-                last_proposed_block.expect("we should expect Some block due to preliminary check");
-            // if no new block proposed then just re-broadcast the last proposed one to
-            // ensure liveness.
-            self.signals.new_block(last_proposed_block.clone()).unwrap();
-            last_proposed_block
+            if let Some(last_proposed_block) = last_proposed_block {
+                // if no new block proposed then just re-broadcast the last proposed one to
+                // ensure liveness.
+                self.signals.new_block(last_proposed_block.clone()).unwrap();
+                Some(last_proposed_block)
+            }
+            else {
+                None
+            }
         };
 
         // Try to set up leader timeout if needed.

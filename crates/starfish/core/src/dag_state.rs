@@ -524,8 +524,8 @@ impl DagState {
         None
     }
 
-    /// Gets the last proposed block from this authority.
-    /// If no block is proposed yet, returns the genesis block.
+    /// Gets the last proposed block header from this authority.
+    /// If no block is proposed yet, returns the genesis block header.
     pub(crate) fn get_last_proposed_block_header(&self) -> VerifiedBlockHeader {
         self.get_last_block_header_for_authority(self.context.own_index)
     }
