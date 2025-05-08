@@ -563,14 +563,14 @@ impl DagState {
         &self,
         authority: AuthorityIndex,
         start: Round,
-    ) -> Vec<VerifiedBlockHeader> {
+    ) -> Vec<VerifiedBlock> {
         let mut blocks = vec![];
         for block_ref in self.recent_refs_by_authority[authority].range((
             Included(BlockRef::new(start, authority, BlockHeaderDigest::MIN)),
             Unbounded,
         )) {
             let block = self
-                .recent_block_headers
+                .recent_blocks
                 .get(block_ref)
                 .expect("Block should exist in recent blocks");
             blocks.push(block.clone());

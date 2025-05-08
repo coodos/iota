@@ -26,15 +26,10 @@ use tonic::{Request, Response, Streaming, codec::CompressionEncoding};
 use tower_http::trace::{DefaultMakeSpan, DefaultOnFailure, TraceLayer};
 use tracing::{debug, error, info, trace, warn};
 
-use super::{
-    BlockStream, NetworkClient, NetworkManager, NetworkService,
-    metrics_layer::{MetricsCallbackMaker, MetricsResponseCallback, SizedRequest, SizedResponse},
-    tonic_gen::{
-        consensus_service_client::ConsensusServiceClient,
-        consensus_service_server::ConsensusService,
-    },
-    tonic_tls::create_rustls_client_config,
-};
+use super::{BlockStream, NetworkClient, NetworkManager, NetworkService, metrics_layer::{MetricsCallbackMaker, MetricsResponseCallback, SizedRequest, SizedResponse}, tonic_gen::{
+    consensus_service_client::ConsensusServiceClient,
+    consensus_service_server::ConsensusService,
+}, tonic_tls::create_rustls_client_config, SerializedBlock};
 use crate::{
     CommitIndex, Round,
     block_header::{BlockRef, VerifiedBlock},
@@ -54,14 +49,6 @@ const MAX_FETCH_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 // Maximum total bytes fetched in a single fetch_blocks() call, after combining
 // the responses.
 const MAX_TOTAL_FETCHED_BYTES: usize = 128 * 1024 * 1024;
-
-/// SerializedBlock is used to send blocks over the network. It contains
-/// separately the serialized block header and the serialized transactions.
-#[expect(dead_code)]
-pub(crate) struct SerializedBlock {
-    serialized_block_header: Bytes,
-    serialized_transactions: Bytes,
-}
 
 // Implements Tonic RPC client for Consensus.
 pub(crate) struct TonicClient {
@@ -116,7 +103,7 @@ impl NetworkClient for TonicClient {
     ) -> ConsensusResult<()> {
         let mut client = self.get_client(peer, timeout).await?;
         let mut request = Request::new(SendBlockRequest {
-            block: block.serialized().clone(),
+            serialized_block: SerializedBlock::from((*block).clone()),
         });
         request.set_timeout(timeout);
         client
@@ -147,7 +134,7 @@ impl NetworkClient for TonicClient {
             .take_while(|b| futures::future::ready(b.is_ok()))
             .filter_map(move |b| async move {
                 match b {
-                    Ok(response) => Some(response.block),
+                    Ok(response) => Some(response.serialized_block),
                     Err(e) => {
                         debug!("Network error received from {}: {e:?}", peer);
                         None
@@ -441,7 +428,7 @@ impl<S: NetworkService> ConsensusService for TonicServiceProxy<S> {
         else {
             return Err(tonic::Status::internal("PeerInfo not found"));
         };
-        let block = request.into_inner().block;
+        let block = request.into_inner().serialized_block;
         self.service
             .handle_send_block(peer_index, block)
             .await
@@ -482,7 +469,7 @@ impl<S: NetworkService> ConsensusService for TonicServiceProxy<S> {
             .handle_subscribe_blocks(peer_index, first_request.last_received_round)
             .await
             .map_err(|e| tonic::Status::internal(format!("{e:?}")))?
-            .map(|block| Ok(SubscribeBlocksResponse { block }));
+            .map(|block| Ok(SubscribeBlocksResponse { serialized_block: block }));
         let rate_limited_stream =
             tokio_stream::StreamExt::throttle(stream, self.context.parameters.min_round_delay / 2)
                 .boxed();
@@ -1003,9 +990,10 @@ impl ResponseHandler for MetricsResponseCallback {
 /// Network message types.
 #[derive(Clone, prost::Message)]
 pub(crate) struct SendBlockRequest {
-    // Serialized SignedBlock.
+    // Serialized VerifiedBlockHeader and VerifiedTransactions.
+    //TODO: what is this prost, do we need to remove it
     #[prost(bytes = "bytes", tag = "1")]
-    block: Bytes,
+    serialized_block: SerializedBlock,
 }
 
 #[derive(Clone, prost::Message)]
@@ -1020,7 +1008,7 @@ pub(crate) struct SubscribeBlocksRequest {
 #[derive(Clone, prost::Message)]
 pub(crate) struct SubscribeBlocksResponse {
     #[prost(bytes = "bytes", tag = "1")]
-    block: Bytes,
+    serialized_block: SerializedBlock,
 }
 
 #[derive(Clone, prost::Message)]

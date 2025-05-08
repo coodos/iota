@@ -55,7 +55,7 @@ pub mod tonic_network;
 mod tonic_tls;
 
 /// A stream of serialized filtered blocks returned over the network.
-pub(crate) type BlockStream = Pin<Box<dyn Stream<Item = Bytes> + Send>>;
+pub(crate) type BlockStream = Pin<Box<dyn Stream<Item = SerializedBlock> + Send>>;
 
 /// Network client for communicating with peers.
 ///
@@ -129,7 +129,7 @@ pub(crate) trait NetworkService: Send + Sync + 'static {
     /// contents are trusted.
     /// Excluded ancestors are also included as part of an effort to further
     /// propagate blocks to peers despite the current exclusion.
-    async fn handle_send_block(&self, peer: AuthorityIndex, block: Bytes) -> ConsensusResult<()>;
+    async fn handle_send_block(&self, peer: AuthorityIndex, serialized_block: SerializedBlock) -> ConsensusResult<()>;
 
     /// Handles the subscription request from the peer.
     /// A stream of newly proposed blocks is returned to the peer.
@@ -147,7 +147,7 @@ pub(crate) trait NetworkService: Send + Sync + 'static {
         peer: AuthorityIndex,
         block_refs: Vec<BlockRef>,
         highest_accepted_rounds: Vec<Round>,
-    ) -> ConsensusResult<Vec<Bytes>>;
+    ) -> ConsensusResult<Vec<SerializedBlock>>;
 
     /// Handles the request to fetch commits by index range from the peer.
     async fn handle_fetch_commits(
@@ -191,4 +191,22 @@ where
 
     /// Stops the network service.
     async fn stop(&mut self);
+}
+
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub(crate) struct SerializedBlock {
+    pub(crate) serialized_block_header: Bytes,
+    pub(crate) serialized_transactions: Bytes,
+}
+
+impl From<VerifiedBlock> for SerializedBlock {
+    fn from(verified_block: VerifiedBlock) -> Self {
+        let (serialized_block_header, serialized_transactions) =
+            verified_block.serialized();
+        Self {
+            serialized_block_header: serialized_block_header.clone(),
+            serialized_transactions: serialized_transactions.clone()
+        }
+    }
 }

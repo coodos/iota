@@ -584,6 +584,10 @@ impl VerifiedBlockHeader {
         &self.serialized
     }
 
+    pub(crate) fn signed_block_header(&self) -> &SignedBlockHeader {
+        &self.signed_block_header
+    }
+
     /// Computes digest from the serialization of the signed block header.
     pub(crate) fn compute_digest(serialized: &[u8]) -> BlockHeaderDigest {
         let mut hasher = DefaultHashFunction::new();
