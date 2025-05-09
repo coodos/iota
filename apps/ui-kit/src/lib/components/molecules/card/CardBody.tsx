@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import cx from 'classnames';
 
-import { ReactNode } from 'react';
-import { Tooltip, TooltipPosition } from '../../atoms';
+import type { ReactNode } from 'react';
+import type { TooltipPosition } from '@/lib/components/atoms/tooltip';
+import { Tooltip } from '@/lib/components/atoms/tooltip';
 
 export type CardBodyProps = {
     title: string;

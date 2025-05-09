@@ -1,8 +1,9 @@
 // Copyright (c) 2024 IOTA Stiftung
 // SPDX-License-Identifier: Apache-2.0
 
-import { ReactNode } from 'react';
-import { Tooltip, TooltipPosition } from '../../atoms';
+import type { ReactNode } from 'react';
+import type { TooltipPosition } from '@/lib/components/atoms/tooltip';
+import { Tooltip } from '@/lib/components/atoms/tooltip';
 import { Info } from '@iota/apps-ui-icons';
 import { DisplayStatsType, DisplayStatsSize } from './displayStats.enums';
 import cx from 'classnames';

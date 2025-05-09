@@ -233,6 +233,15 @@ module.exports = {
             },
         },
         {
+            files: ['apps/ui-kit/**/*'],
+            rules: {
+                '@typescript-eslint/consistent-type-imports': ['error'],
+                'import/consistent-type-specifier-style': ['error', 'prefer-top-level'],
+                '@typescript-eslint/no-explicit-any': 'off',
+                'import/no-cycle': ['error'],
+            },
+        },
+        {
             files: ['dapps/kiosk/**/*'],
             rules: {
                 'no-unused-vars': 'off', // or "@typescript-eslint/no-unused-vars": "off",

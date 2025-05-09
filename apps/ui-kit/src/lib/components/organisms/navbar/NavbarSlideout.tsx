@@ -3,8 +3,9 @@
 
 import { ArrowBack } from '@iota/apps-ui-icons';
 import cx from 'classnames';
-import { Button, ButtonType, NavbarItem, NavbarItemType } from '@/components';
-import { NavbarProps } from './Navbar';
+import { Button, ButtonType } from '@/lib/components/atoms/button';
+import { NavbarItem, NavbarItemType } from '@/lib/components/molecules/navbar-item';
+import type { NavbarProps } from './Navbar';
 
 export function NavbarSlideout({
     items,
