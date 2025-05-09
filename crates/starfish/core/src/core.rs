@@ -1593,12 +1593,12 @@ mod test {
         let mut expected_ancestors = BTreeSet::new();
 
         // Adding one block now will trigger the creation of new block for round 1
-        let block_header_1 = VerifiedBlockHeader::new_for_test(TestBlockHeader::new(1, 1).build());
-        expected_ancestors.insert(block_header_1.reference());
+        let verified_block = VerifiedBlock::new_for_test(TestBlockHeader::new(1, 1).build());
+        expected_ancestors.insert(verified_block.reference());
         // Wait for min round delay to allow blocks to be proposed.
         sleep(context.parameters.min_round_delay).await;
         // add blocks to trigger proposal.
-        _ = core.add_blocks(vec![block_header_1]);
+        _ = core.add_blocks(vec![verified_block]);
 
         assert_eq!(core.last_proposed_round(), 1);
         expected_ancestors.insert(core.last_proposed_block_header().reference());

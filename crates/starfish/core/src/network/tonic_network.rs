@@ -103,7 +103,8 @@ impl NetworkClient for TonicClient {
     ) -> ConsensusResult<()> {
         let mut client = self.get_client(peer, timeout).await?;
         let mut request = Request::new(SendBlockRequest {
-            serialized_block: SerializedBlock::from((*block).clone()),
+            serialized_block_header: block.verified_block_header.serialized().clone(),
+            serialized_transactions: block.verified_transactions.serialized().clone(),
         });
         request.set_timeout(timeout);
         client
@@ -256,7 +257,7 @@ impl NetworkClient for TonicClient {
         peer: AuthorityIndex,
         authorities: Vec<AuthorityIndex>,
         timeout: Duration,
-    ) -> ConsensusResult<Vec<Bytes>> {
+    ) -> ConsensusResult<(Vec<Bytes>, Vec<Bytes>)> {
         let mut client = self.get_client(peer, timeout).await?;
         let mut request = Request::new(FetchLatestBlocksRequest {
             authorities: authorities
@@ -276,16 +277,21 @@ impl NetworkClient for TonicClient {
                 }
             })?
             .into_inner();
-        let mut blocks = vec![];
+        let mut blocks = (vec![], vec![]);
         let mut total_fetched_bytes = 0;
         loop {
             match stream.message().await {
                 Ok(Some(response)) => {
                     let vec_serialized_block_headers = response.vec_serialized_block_header;
+                    let vec_serialized_transactions = response.vec_serialized_transactions;
                     for b in &vec_serialized_block_headers {
                         total_fetched_bytes += b.len();
                     }
-                    blocks.extend(vec_serialized_block_headers);
+                    for b in &vec_serialized_transactions {
+                        total_fetched_bytes += b.len();
+                    }
+                    blocks.0.extend(vec_serialized_block_headers);
+                    blocks.1.extend(vec_serialized_transactions);
                     if total_fetched_bytes > MAX_TOTAL_FETCHED_BYTES {
                         info!(
                             "fetch_blocks() fetched bytes exceeded limit: {} > {}, terminating stream.",
@@ -298,7 +304,7 @@ impl NetworkClient for TonicClient {
                     break;
                 }
                 Err(e) => {
-                    if blocks.is_empty() {
+                    if blocks.0.is_empty() {
                         if e.code() == tonic::Code::DeadlineExceeded {
                             return Err(ConsensusError::NetworkRequestTimeout(format!(
                                 "fetch_blocks failed mid-stream: {e:?}"
@@ -440,9 +446,13 @@ impl<S: NetworkService> ConsensusService for TonicServiceProxy<S> {
         else {
             return Err(tonic::Status::internal("PeerInfo not found"));
         };
-        let block = request.into_inner().serialized_block;
+        let request = request.into_inner();
+        let serialized_block = SerializedBlock {
+            serialized_block_header: request.serialized_block_header,
+            serialized_transactions: request.serialized_transactions,
+        };
         self.service
-            .handle_send_block(peer_index, block)
+            .handle_send_block(peer_index, serialized_block)
             .await
             .map_err(|e| tonic::Status::invalid_argument(format!("{e:?}")))?;
         Ok(Response::new(SendBlockResponse {}))
@@ -525,7 +535,10 @@ impl<S: NetworkService> ConsensusService for TonicServiceProxy<S> {
         let responses: std::vec::IntoIter<Result<FetchBlocksResponse, tonic::Status>> =
             chunk_blocks(blocks, MAX_FETCH_RESPONSE_BYTES)
                 .into_iter()
-                .map(|blocks| Ok(FetchBlocksResponse { blocks }))
+                .map(|blocks| Ok(FetchBlocksResponse {
+                    vec_serialized_block_header: blocks.0, 
+                    vec_serialized_transactions: blocks.1, 
+                }))
                 .collect::<Vec<_>>()
                 .into_iter();
         let stream = iter(responses);
@@ -608,7 +621,10 @@ impl<S: NetworkService> ConsensusService for TonicServiceProxy<S> {
         let responses: std::vec::IntoIter<Result<FetchLatestBlocksResponse, tonic::Status>> =
             chunk_blocks(blocks, MAX_FETCH_RESPONSE_BYTES)
                 .into_iter()
-                .map(|blocks| Ok(FetchLatestBlocksResponse { blocks }))
+                .map(|blocks| Ok(FetchLatestBlocksResponse {
+                    vec_serialized_block_header: blocks.0, 
+                    vec_serialized_transactions: blocks.1,
+                }))
                 .collect::<Vec<_>>()
                 .into_iter();
         let stream = iter(responses);
@@ -1012,9 +1028,10 @@ impl ResponseHandler for MetricsResponseCallback {
 #[derive(Clone, prost::Message)]
 pub(crate) struct SendBlockRequest {
     // Serialized VerifiedBlockHeader and VerifiedTransactions.
-    //TODO: what is this prost, do we need to remove it
     #[prost(bytes = "bytes", tag = "1")]
-    serialized_block: SerializedBlock,
+    serialized_block_header: Bytes,
+    #[prost(bytes = "bytes", tag = "2")]
+    serialized_transactions: Bytes,
 }
 
 #[derive(Clone, prost::Message)]
@@ -1083,6 +1100,8 @@ pub(crate) struct FetchLatestBlocksRequest {
 pub(crate) struct FetchLatestBlocksResponse {
     #[prost(bytes = "bytes", repeated, tag = "1")]
     vec_serialized_block_header: Vec<Bytes>,
+    #[prost(bytes = "bytes", repeated, tag = "2")]
+    vec_serialized_transactions: Vec<Bytes>,
 }
 
 #[derive(Clone, prost::Message)]
@@ -1098,21 +1117,24 @@ pub(crate) struct GetLatestRoundsResponse {
     highest_accepted: Vec<u32>,
 }
 
-fn chunk_blocks(blocks: Vec<Bytes>, chunk_limit: usize) -> Vec<Vec<Bytes>> {
+fn chunk_blocks(blocks: (Vec<Bytes>, Vec<Bytes>), chunk_limit: usize) -> Vec<(Vec<Bytes>, Vec<Bytes>)> {
     let mut chunks = vec![];
-    let mut chunk = vec![];
+    let mut chunk = (vec![], vec![]);
     let mut chunk_size = 0;
-    for block in blocks {
-        let block_size = block.len();
-        if !chunk.is_empty() && chunk_size + block_size > chunk_limit {
+    for (i, block_header) in blocks.0.iter().enumerate() {
+        let transactions = &blocks.1[i];
+        // Compute the size of block
+        let block_size = block_header.len() + transactions.len();
+        if !chunk.0.is_empty() && chunk_size + block_size > chunk_limit {
             chunks.push(chunk);
-            chunk = vec![];
+            chunk =(vec![], vec![]);
             chunk_size = 0;
         }
-        chunk.push(block);
+        chunk.0.push(block_header.clone());
+        chunk.1.push(transactions.clone());
         chunk_size += block_size;
     }
-    if !chunk.is_empty() {
+    if !chunk.0.is_empty() {
         chunks.push(chunk);
     }
     chunks

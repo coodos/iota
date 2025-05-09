@@ -207,10 +207,16 @@ impl Store for RocksDBStore {
         let serialized_vec_transactions = self.transactions.multi_get(keys.clone())?;
         let serialized_block_headers = self.block_headers.multi_get(keys)?;
         let mut blocks = vec![];
-        for ((key, serialized_block_header), serialized_transactions) in refs.iter().zip(serialized_block_headers).iter().zip(serialized_vec_transactions) {
+        for ((key, serialized_block_header), serialized_transactions) in refs.iter()
+            .zip(serialized_block_headers)
+            .zip(serialized_vec_transactions)
+        {
             if let (Some(serialized_block_header), Some(serialized_transactions)) = (serialized_block_header, serialized_transactions) {
                 let block = VerifiedBlock::try_from(SerializedBlock {
-                    serialized_block_header, serialized_transactions})?;
+                    serialized_block_header,
+                    serialized_transactions,
+                })?;
+
                 // Makes sure block data is not corrupted, by comparing digests.
                 assert_eq!(*key, block.reference());
                 blocks.push(Some(block));

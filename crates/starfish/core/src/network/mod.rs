@@ -112,7 +112,7 @@ pub(crate) trait NetworkClient: Send + Sync + Sized + 'static {
         peer: AuthorityIndex,
         authorities: Vec<AuthorityIndex>,
         timeout: Duration,
-    ) -> ConsensusResult<Vec<Bytes>>;
+    ) -> ConsensusResult<(Vec<Bytes>, Vec<Bytes>)>;
 }
 
 /// Network service for handling requests from peers.
@@ -157,7 +157,7 @@ pub(crate) trait NetworkService: Send + Sync + 'static {
         &self,
         peer: AuthorityIndex,
         authorities: Vec<AuthorityIndex>,
-    ) -> ConsensusResult<Vec<Bytes>>;
+    ) -> ConsensusResult<(Vec<Bytes>,Vec<Bytes>)>;
 
     /// Handles the request to get the latest received & accepted rounds of all
     /// authorities.
@@ -189,7 +189,7 @@ where
 }
 
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[derive(Clone, PartialEq, Eq, Default, Serialize, Deserialize, Debug)]
 pub(crate) struct SerializedBlock {
     pub(crate) serialized_block_header: Bytes,
     pub(crate) serialized_transactions: Bytes,

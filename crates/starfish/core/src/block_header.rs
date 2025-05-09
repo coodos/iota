@@ -658,6 +658,10 @@ impl VerifiedTransactions {
             serialized,
         }
     }
+    
+    pub fn serialized(&self) -> &Bytes {
+        &self.serialized
+    }
 }
 
 /// VerifiedBlock is a pair of verified block header and transactions. It is
