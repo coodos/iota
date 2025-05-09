@@ -24,6 +24,7 @@ use crate::{
     ensure,
     error::{ConsensusError, ConsensusResult},
 };
+use crate::network::SerializedBlock;
 
 /// Round number of a block.
 pub type Round = u32;
@@ -677,6 +678,7 @@ impl VerifiedBlock {
             verified_transactions,
         }
     }
+
     #[cfg(test)]
     pub fn new_for_test(block_header: BlockHeader) -> Self {
         let verified_block_header = VerifiedBlockHeader::new_for_test(block_header);
@@ -695,13 +697,13 @@ impl VerifiedBlock {
         }
     }
 
-    // This functions returns a pair of serialized block header and serialized transactions
+    // This function returns a pair of serialized block header and serialized transactions
     pub fn serialized(&self) -> (&Bytes, &Bytes) {
         (&self.verified_block_header.serialized, &self.verified_transactions.serialized)
     }
 }
 
-/// Allow quick access on the underlying BlockHeader without having to always
+/// Allow quick access to the underlying BlockHeader without having to always
 /// refer to the inner block ref.
 impl Deref for VerifiedBlock {
     type Target = VerifiedBlockHeader;
@@ -710,6 +712,26 @@ impl Deref for VerifiedBlock {
         &self.verified_block_header
     }
 }
+
+impl TryFrom<SerializedBlock> for VerifiedBlock {
+type Error = ConsensusError;
+
+fn try_from(serialized_block: SerializedBlock) -> ConsensusResult<Self> {
+    let signed_block_header: SignedBlockHeader =
+        bcs::from_bytes(&serialized_block.serialized_block_header).map_err(ConsensusError::MalformedBlockHeader)?;
+    let transactions: Vec<Transaction> =
+        bcs::from_bytes(&serialized_block.serialized_transactions).map_err(ConsensusError::MalformedTransactions)?;
+    // Only accepted blocks should have been written to storage.
+    let verified_block_header = VerifiedBlockHeader::new_verified(signed_block_header, serialized_block.serialized_block_header);
+
+    // TODO: we might need to check whether transaction commitment is consistent with the one in header
+    let verified_transactions = VerifiedTransactions::new(transactions, verified_block_header.reference(), serialized_block.serialized_transactions);
+    // Assemble the block from the header and transactions
+    Ok(VerifiedBlock::new(verified_block_header, verified_transactions))
+}
+}
+
+
 /// Generates the genesis blocks for the current Committee.
 /// The blocks are returned in authority index order.
 pub(crate) fn genesis_blocks(context: Arc<Context>) -> Vec<VerifiedBlock> {

@@ -9,14 +9,12 @@ use bytes::Bytes;
 use futures::{Stream, StreamExt, ready, stream, task};
 use iota_macros::fail_point_async;
 use parking_lot::RwLock;
-use serde::Serialize;
 use starfish_config::AuthorityIndex;
 use tokio::{sync::broadcast, time::sleep};
 use tokio_util::sync::ReusableBoxFuture;
 use tracing::{debug, info, warn};
 
-use crate::{BlockHeaderAPI, CommitIndex, Round, VerifiedBlockHeader, block_header::{BlockRef, GENESIS_ROUND, SignedBlockHeader, VerifiedBlock}, block_verifier::BlockVerifier, commit::{CommitAPI as _, CommitRange, TrustedCommit}, commit_vote_monitor::CommitVoteMonitor, context::Context, core_thread::CoreThreadDispatcher, dag_state::DagState, error::{ConsensusError, ConsensusResult}, network::{BlockStream, NetworkService}, stake_aggregator::{QuorumThreshold, StakeAggregator}, storage::Store, synchronizer::SynchronizerHandle, Transaction};
-use crate::block_header::VerifiedTransactions;
+use crate::{BlockHeaderAPI, CommitIndex, Round, VerifiedBlockHeader, block_header::{BlockRef, GENESIS_ROUND, VerifiedBlock}, block_verifier::BlockVerifier, commit::{CommitAPI as _, CommitRange, TrustedCommit}, commit_vote_monitor::CommitVoteMonitor, context::Context, core_thread::CoreThreadDispatcher, dag_state::DagState, error::{ConsensusError, ConsensusResult}, network::{BlockStream, NetworkService}, stake_aggregator::{QuorumThreshold, StakeAggregator}, storage::Store, synchronizer::SynchronizerHandle};
 use crate::network::SerializedBlock;
 
 pub(crate) const COMMIT_LAG_MULTIPLIER: u32 = 5;
@@ -76,22 +74,10 @@ impl<C: CoreThreadDispatcher> NetworkService for AuthorityService<C> {
 
         let peer_hostname = &self.context.committee.authority(peer).hostname;
 
-        // TODO: dedup block verifications, here and with fetched blocks.
-
-        let signed_block_header: SignedBlockHeader =
-            bcs::from_bytes(&serialized_block.serialized_block_header).map_err(ConsensusError::MalformedBlockHeader)?;
-        let transactions: Vec<Transaction> =
-            bcs::from_bytes(&serialized_block.serialized_transactions).map_err(ConsensusError::MalformedTransactions)?;
-
-        let verified_block_header = VerifiedBlockHeader::new_verified(signed_block_header, serialized_block.serialized_block_header);
-
-
-        let verified_transactions = VerifiedTransactions::new(transactions, verified_block_header.reference(), serialized_block.serialized_transactions);
-
-
+        let verified_block = VerifiedBlock::try_from(serialized_block)?;
 
         // Reject blocks not produced by the peer.
-        if peer != verified_block_header.author() {
+        if peer != verified_block.author() {
             self.context
                 .metrics
                 .node_metrics
@@ -102,14 +88,14 @@ impl<C: CoreThreadDispatcher> NetworkService for AuthorityService<C> {
                     "UnexpectedAuthority",
                 ])
                 .inc();
-            let e = ConsensusError::UnexpectedAuthority(verified_block_header.author(), peer);
+            let e = ConsensusError::UnexpectedAuthority(verified_block.author(), peer);
             info!("Block with wrong authority from {}: {}", peer, e);
             return Err(e);
         }
         let peer_hostname = &self.context.committee.authority(peer).hostname;
 
         // Reject blocks failing validations.
-        if let Err(e) = self.block_verifier.verify(verified_block_header.signed_block_header()) {
+        if let Err(e) = self.block_verifier.verify(verified_block.signed_block_header()) {
             self.context
                 .metrics
                 .node_metrics
@@ -123,9 +109,7 @@ impl<C: CoreThreadDispatcher> NetworkService for AuthorityService<C> {
             info!("Invalid block from {}: {}", peer, e);
             return Err(e);
         }
-        // TODO: we might need to check whether transaction commitment is consistent with the one in header
-        // Assemble the block from the header and transactions
-        let verified_block = VerifiedBlock::new(verified_block_header, verified_transactions);
+
         let block_ref = verified_block.reference();
         debug!("Received block {} via send block.", block_ref);
 
@@ -222,7 +206,7 @@ impl<C: CoreThreadDispatcher> NetworkService for AuthorityService<C> {
 
         let missing_ancestors = self
             .core_dispatcher
-            .add_blocks(vec![*verified_block])
+            .add_blocks(vec![verified_block])
             .await
             .map_err(|_| ConsensusError::Shutdown)?;
         if !missing_ancestors.is_empty() {
@@ -277,7 +261,7 @@ impl<C: CoreThreadDispatcher> NetworkService for AuthorityService<C> {
         peer: AuthorityIndex,
         block_refs: Vec<BlockRef>,
         highest_accepted_rounds: Vec<Round>,
-    ) -> ConsensusResult<Vec<Bytes> > {
+    ) -> ConsensusResult<(Vec<Bytes>, Vec<Bytes>) > {
         fail_point_async!("consensus-rpc-response");
 
         const MAX_ADDITIONAL_BLOCKS: usize = 10;
@@ -332,7 +316,7 @@ impl<C: CoreThreadDispatcher> NetworkService for AuthorityService<C> {
             .into_iter()
             .chain(ancestor_blocks)
             .flatten()
-            .map(|block| SerializedBlock::from(block).serialize().expect("we should expect correct serialization from Verified Block"))
+            .map(|block| SerializedBlock::from(block))
             .collect::<Vec<_>>();
 
         Ok(result)

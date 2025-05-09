@@ -256,7 +256,7 @@ impl Core {
     #[tracing::instrument(skip_all)]
     pub(crate) fn add_blocks(
         &mut self,
-        blocks: Vec<VerifiedBlockHeader>,
+        blocks: Vec<VerifiedBlock>,
     ) -> ConsensusResult<BTreeSet<BlockRef>> {
         let _scope = monitored_scope("Core::add_blocks");
         let _s = self
@@ -271,8 +271,8 @@ impl Core {
             .node_metrics
             .core_add_blocks_batch_size
             .observe(blocks.len() as f64);
-
-        let (accepted_blocks, missing_block_refs) = self.block_manager.try_accept_blocks(blocks);
+        let block_headers : Vec<_> = blocks.into_iter().map(|b|b.verified_block_header).collect();
+        let (accepted_blocks, missing_block_refs) = self.block_manager.try_accept_blocks(block_headers);
 
         if !accepted_blocks.is_empty() {
             debug!(

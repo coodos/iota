@@ -50,22 +50,12 @@ use tokio::{
 };
 use tracing::{debug, info, warn};
 
-use crate::{
-    CommitConsumerMonitor, CommitIndex,
-    block_header::{BlockHeaderAPI, BlockRef, SignedBlockHeader, VerifiedBlockHeader},
-    block_verifier::BlockVerifier,
-    commit::{
-        CertifiedCommit, CertifiedCommits, Commit, CommitAPI as _, CommitDigest, CommitRange,
-        CommitRef, TrustedCommit,
-    },
-    commit_vote_monitor::CommitVoteMonitor,
-    context::Context,
-    core_thread::CoreThreadDispatcher,
-    dag_state::DagState,
-    error::{ConsensusError, ConsensusResult},
-    network::NetworkClient,
-    stake_aggregator::{QuorumThreshold, StakeAggregator},
-};
+use crate::{CommitConsumerMonitor, CommitIndex, block_header::{BlockHeaderAPI, SignedBlockHeader, VerifiedBlockHeader}, block_verifier::BlockVerifier, commit::{
+    CertifiedCommit, CertifiedCommits, Commit, CommitAPI as _, CommitDigest, CommitRange,
+    CommitRef, TrustedCommit,
+}, commit_vote_monitor::CommitVoteMonitor, context::Context, core_thread::CoreThreadDispatcher, dag_state::DagState, error::{ConsensusError, ConsensusResult}, network::NetworkClient, stake_aggregator::{QuorumThreshold, StakeAggregator}};
+use crate::block_header::{VerifiedBlock};
+use crate::network::SerializedBlock;
 
 // Handle to stop the CommitSyncer loop.
 pub(crate) struct CommitSyncerHandle {
@@ -262,7 +252,10 @@ impl<C: NetworkClient> CommitSyncer<C> {
                     bytes
                         + c.blocks()
                             .iter()
-                            .map(|b| b.serialized().len())
+                            .map(|b| {
+                                assert_eq!(b.serialized().0.len(), b.serialized().1.len(), "mismatch between the number of block headers and vectors of transactions");
+                                b.serialized().0.len()
+                            })
                             .sum::<usize>() as u64,
                 )
             });
@@ -601,46 +594,36 @@ impl<C: NetworkClient> CommitSyncer<C> {
                         )
                         .await?;
                     // 5. Verify the same number of blocks are returned as requested.
-                    if request_block_refs.len() != serialized_blocks.len() {
+                    if request_block_refs.len() != serialized_blocks.0.len() || request_block_refs.len() != serialized_blocks.1.len() {
                         return Err(ConsensusError::UnexpectedNumberOfBlocksFetched {
                             authority: target_authority,
                             requested: request_block_refs.len(),
-                            received: serialized_blocks.len(),
+                            received_headers: serialized_blocks.0.len(),
+                            received_transactions: serialized_blocks.1.len()
                         });
                     }
                     // 6. Verify returned blocks have valid formats.
-                    let signed_blocks = serialized_blocks
-                        .iter()
-                        .map(|serialized| {
-                            let block: SignedBlockHeader = bcs::from_bytes(serialized)
-                                .map_err(ConsensusError::MalformedBlock)?;
+                    let verified_blocks = serialized_blocks.0.iter().cloned().zip(serialized_blocks.1).zip(request_block_refs)
+                        .map(|((serialized_block_header, serialized_transactions), requested_block_ref)| {
+                            let block = VerifiedBlock::try_from(SerializedBlock {
+                                serialized_block_header, serialized_transactions})?;
+
+                            // 7. Verify the returned blocks match the requested block refs.
+                            // If they do match, the returned blocks can be considered verified as well.
+                            if *requested_block_ref != block.reference() {
+                                return Err(ConsensusError::UnexpectedBlockForCommit {
+                                    peer: target_authority,
+                                    requested: *requested_block_ref,
+                                    received: block.reference(),
+                                });
+                            }
+
                             Ok(block)
                         })
                         .collect::<ConsensusResult<Vec<_>>>()?;
-                    // 7. Verify the returned blocks match the requested block refs.
-                    // If they do match, the returned blocks can be considered verified as well.
-                    let mut blocks = Vec::new();
-                    for ((requested_block_ref, signed_block), serialized) in request_block_refs
-                        .iter()
-                        .zip(signed_blocks.into_iter())
-                        .zip(serialized_blocks.into_iter())
-                    {
-                        let signed_block_digest = VerifiedBlockHeader::compute_digest(&serialized);
-                        let received_block_ref = BlockRef::new(
-                            signed_block.round(),
-                            signed_block.author(),
-                            signed_block_digest,
-                        );
-                        if *requested_block_ref != received_block_ref {
-                            return Err(ConsensusError::UnexpectedBlockForCommit {
-                                peer: target_authority,
-                                requested: *requested_block_ref,
-                                received: received_block_ref,
-                            });
-                        }
-                        blocks.push(VerifiedBlockHeader::new_verified(signed_block, serialized));
-                    }
-                    Ok(blocks)
+
+
+                    Ok(verified_blocks)
                 }
             })
             .collect();
@@ -749,7 +732,7 @@ impl<C: NetworkClient> Inner<C> {
         commit_range: CommitRange,
         serialized_commits: Vec<Bytes>,
         serialized_vote_blocks: Vec<Bytes>,
-    ) -> ConsensusResult<(Vec<TrustedCommit>, Vec<VerifiedBlockHeader>)> {
+    ) -> ConsensusResult<(Vec<TrustedCommit>, Vec<VerifiedBlock>)> {
         // Parse and verify commits.
         let mut commits = Vec::new();
         for serialized in &serialized_commits {

@@ -23,7 +23,7 @@ use tracing::warn;
 
 use crate::{
     BlockHeaderAPI as _,
-    block_header::{BlockRef, Round, VerifiedBlockHeader},
+    block_header::{BlockRef, Round},
     commit::CertifiedCommits,
     context::Context,
     core::Core,
@@ -31,13 +31,14 @@ use crate::{
     dag_state::DagState,
     error::{ConsensusError, ConsensusResult},
 };
+use crate::block_header::VerifiedBlock;
 
 const CORE_THREAD_COMMANDS_CHANNEL_SIZE: usize = 2000;
 
 enum CoreThreadCommand {
     /// Add blocks to be processed and accepted
     AddBlocks(
-        Vec<VerifiedBlockHeader>,
+        Vec<VerifiedBlock>,
         oneshot::Sender<BTreeSet<BlockRef>>,
     ),
     /// Add committed sub dag blocks for processing and acceptance.
@@ -64,7 +65,7 @@ pub enum CoreError {
 pub trait CoreThreadDispatcher: Sync + Send + 'static {
     async fn add_blocks(
         &self,
-        blocks: Vec<VerifiedBlockHeader>,
+        blocks: Vec<VerifiedBlock>,
     ) -> Result<BTreeSet<BlockRef>, CoreError>;
 
     async fn add_certified_commits(
@@ -255,13 +256,13 @@ impl ChannelCoreThreadDispatcher {
 impl CoreThreadDispatcher for ChannelCoreThreadDispatcher {
     async fn add_blocks(
         &self,
-        blocks: Vec<VerifiedBlockHeader>,
+        blocks: Vec<VerifiedBlock>,
     ) -> Result<BTreeSet<BlockRef>, CoreError> {
         for block in &blocks {
             self.highest_received_rounds[block.author()].fetch_max(block.round(), Ordering::AcqRel);
         }
         let (sender, receiver) = oneshot::channel();
-        self.send(CoreThreadCommand::AddBlocks(blocks.clone(), sender))
+        self.send(CoreThreadCommand::AddBlocks(blocks, sender))
             .await;
         let missing_block_refs = receiver.await.map_err(|e| Shutdown(e.to_string()))?;
 

@@ -281,10 +281,11 @@ impl NetworkClient for TonicClient {
         loop {
             match stream.message().await {
                 Ok(Some(response)) => {
-                    for b in &response.blocks {
+                    let vec_serialized_block_headers = response.vec_serialized_block_header;
+                    for b in &vec_serialized_block_headers {
                         total_fetched_bytes += b.len();
                     }
-                    blocks.extend(response.blocks);
+                    blocks.extend(vec_serialized_block_headers);
                     if total_fetched_bytes > MAX_TOTAL_FETCHED_BYTES {
                         info!(
                             "fetch_blocks() fetched bytes exceeded limit: {} > {}, terminating stream.",
@@ -1072,8 +1073,6 @@ pub(crate) struct FetchLatestBlocksRequest {
 pub(crate) struct FetchLatestBlocksResponse {
     #[prost(bytes = "bytes", repeated, tag = "1")]
     vec_serialized_block_header: Vec<Bytes>,
-    #[prost(bytes = "bytes", repeated, tag = "2")]
-    vec_serialized_transactions: Vec<Bytes>,
 }
 
 #[derive(Clone, prost::Message)]

@@ -16,9 +16,10 @@ use typed_store::{
 
 use super::{CommitInfo, Store, WriteBatch};
 use crate::{block_header::{
-    BlockHeaderAPI as _, BlockHeaderDigest, BlockRef, Round, SignedBlockHeader, VerifiedBlock,
-    VerifiedBlockHeader, VerifiedTransactions,
-}, commit::{CommitAPI as _, CommitDigest, CommitIndex, CommitRange, CommitRef, TrustedCommit}, error::{ConsensusError, ConsensusResult}, Transaction};
+    BlockHeaderAPI as _, BlockHeaderDigest, BlockRef, Round, VerifiedBlock,
+    VerifiedBlockHeader,
+}, commit::{CommitAPI as _, CommitDigest, CommitIndex, CommitRange, CommitRef, TrustedCommit}, error::{ConsensusError, ConsensusResult}};
+use crate::network::SerializedBlock;
 
 /// Persistent storage with RocksDB.
 // TODO: Store block_headers and separately transaction data (not blocks). When trying to read a block, assemble a full block by reading from two column families.
@@ -208,18 +209,8 @@ impl Store for RocksDBStore {
         let mut blocks = vec![];
         for ((key, serialized_block_header), serialized_transactions) in refs.iter().zip(serialized_block_headers).iter().zip(serialized_vec_transactions) {
             if let (Some(serialized_block_header), Some(serialized_transactions)) = (serialized_block_header, serialized_transactions) {
-                let signed_block_header: SignedBlockHeader =
-                    bcs::from_bytes(&serialized_block_header).map_err(ConsensusError::MalformedBlockHeader)?;
-                let transactions: Vec<Transaction> =
-                    bcs::from_bytes(&serialized_transactions).map_err(ConsensusError::MalformedTransactions)?;
-                // Only accepted blocks should have been written to storage.
-                let verified_block_header = VerifiedBlockHeader::new_verified(signed_block_header, serialized_block_header);
-
-                // TODO: we might need to check whether transaction commitment is consistent with the one in header
-                let verified_transactions = VerifiedTransactions::new(transactions, verified_block_header.reference(), serialized_transactions);
-
-                // Assemble the block from the header and transactions
-                let block = VerifiedBlock::new(verified_block_header, verified_transactions);
+                let block = VerifiedBlock::try_from(SerializedBlock {
+                    serialized_block_header, serialized_transactions})?;
                 // Makes sure block data is not corrupted, by comparing digests.
                 assert_eq!(*key, block.reference());
                 blocks.push(Some(block));

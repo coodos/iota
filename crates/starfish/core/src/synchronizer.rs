@@ -7,7 +7,6 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-
 use bytes::Bytes;
 use futures::{StreamExt as _, stream::FuturesUnordered};
 use iota_macros::fail_point_async;
@@ -42,6 +41,8 @@ use crate::{
     error::{ConsensusError, ConsensusResult},
     network::NetworkClient,
 };
+use crate::block_header::VerifiedBlock;
+use crate::network::SerializedBlock;
 
 /// The number of concurrent fetch blocks requests per authority
 const FETCH_BLOCKS_CONCURRENCY: usize = 5;
@@ -512,7 +513,7 @@ impl<C: NetworkClient, V: BlockVerifier, D: CoreThreadDispatcher> Synchronizer<C
     /// error is returned then the verified blocks are immediately sent to
     /// Core for processing.
     async fn process_fetched_blocks(
-        serialized_blocks: Vec<Bytes>,
+        serialized_blocks: (Vec<Bytes>, Vec<Bytes>),
         peer_index: AuthorityIndex,
         requested_blocks_guard: BlocksGuard,
         core_dispatcher: Arc<D>,
@@ -525,10 +526,13 @@ impl<C: NetworkClient, V: BlockVerifier, D: CoreThreadDispatcher> Synchronizer<C
         // The maximum number of blocks that can be additionally fetched from the one
         // requested - those are potentially missing ancestors.
         const MAX_ADDITIONAL_BLOCKS: usize = 10;
+        if serialized_blocks.0.len() != serialized_blocks.1.len()  {
+            return Err(ConsensusError::NumberOfBlockHeadersAndBodiesDiffers(serialized_blocks.0.len(), serialized_blocks.1.len(), peer_index));
+        }
 
         // Ensure that all the returned blocks do not go over the total max allowed
         // returned blocks
-        if serialized_blocks.len() > requested_blocks_guard.block_refs.len() + MAX_ADDITIONAL_BLOCKS
+        if serialized_blocks.0.len() > requested_blocks_guard.block_refs.len() + MAX_ADDITIONAL_BLOCKS
         {
             return Err(ConsensusError::TooManyFetchedBlocksReturned(peer_index));
         }
@@ -636,19 +640,23 @@ impl<C: NetworkClient, V: BlockVerifier, D: CoreThreadDispatcher> Synchronizer<C
     }
 
     fn verify_blocks(
-        serialized_blocks: Vec<Bytes>,
+        serialized_blocks: (Vec<Bytes>, Vec<Bytes>),
         block_verifier: Arc<V>,
         context: &Context,
         peer_index: AuthorityIndex,
-    ) -> ConsensusResult<Vec<VerifiedBlockHeader>> {
+    ) -> ConsensusResult<Vec<VerifiedBlock>> {
         let mut verified_blocks = Vec::new();
 
-        for serialized_block in serialized_blocks {
-            let signed_block: SignedBlockHeader =
-                bcs::from_bytes(&serialized_block).map_err(ConsensusError::MalformedBlock)?;
+        for (serialized_block_header, serialized_transactions) in
+            serialized_blocks.0.clone().into_iter().zip(serialized_blocks.1.clone().into_iter())
+        {
 
-            // TODO: dedup block verifications, here and with fetched blocks.
-            if let Err(e) = block_verifier.verify(&signed_block) {
+            let verified_block = VerifiedBlock::try_from(SerializedBlock{serialized_block_header: serialized_block_header.clone(), serialized_transactions})?;
+
+            let signed_block_header: SignedBlockHeader =
+                bcs::from_bytes(&serialized_block_header).map_err(ConsensusError::MalformedBlockHeader)?;
+            // TODO: dedup block verifications, here and with fetched blocks??
+            if let Err(e) = block_verifier.verify(&signed_block_header) {
                 // TODO: we might want to use a different metric to track the invalid "served"
                 // blocks from the invalid "proposed" ones.
                 let hostname = context.committee.authority(peer_index).hostname.clone();
@@ -662,7 +670,7 @@ impl<C: NetworkClient, V: BlockVerifier, D: CoreThreadDispatcher> Synchronizer<C
                 warn!("Invalid block received from {}: {}", peer_index, e);
                 return Err(e);
             }
-            let verified_block = VerifiedBlockHeader::new_verified(signed_block, serialized_block);
+
 
             // Dropping is ok because the block will be refetched.
             // TODO: improve efficiency, maybe suspend and continue processing the block
@@ -692,7 +700,7 @@ impl<C: NetworkClient, V: BlockVerifier, D: CoreThreadDispatcher> Synchronizer<C
         request_timeout: Duration,
         mut retries: u32,
     ) -> (
-        ConsensusResult<Vec<Bytes>>,
+        ConsensusResult<(Vec<Bytes>, Vec<Bytes>)>,
         BlocksGuard,
         u32,
         AuthorityIndex,
@@ -953,7 +961,7 @@ impl<C: NetworkClient, V: BlockVerifier, D: CoreThreadDispatcher> Synchronizer<C
                 // Now process the returned results
                 let mut total_fetched = 0;
                 for (blocks_guard, fetched_blocks, peer) in results {
-                    total_fetched += fetched_blocks.len();
+                    total_fetched += fetched_blocks.0.len();
 
                     if let Err(err) = Self::process_fetched_blocks(
                         fetched_blocks,
@@ -1006,7 +1014,7 @@ impl<C: NetworkClient, V: BlockVerifier, D: CoreThreadDispatcher> Synchronizer<C
         network_client: Arc<C>,
         missing_blocks: BTreeSet<BlockRef>,
         dag_state: Arc<RwLock<DagState>>,
-    ) -> Vec<(BlocksGuard, Vec<Bytes>, AuthorityIndex)> {
+    ) -> Vec<(BlocksGuard, (Vec<Bytes>, Vec<Bytes>), AuthorityIndex)> {
         const MAX_PEERS: usize = 3;
 
         // Attempt to fetch only up to a max of blocks
@@ -1097,7 +1105,7 @@ impl<C: NetworkClient, V: BlockVerifier, D: CoreThreadDispatcher> Synchronizer<C
                     let peer_hostname = &context.committee.authority(peer_index).hostname;
                     match response {
                         Ok(fetched_blocks) => {
-                            info!("Fetched {} blocks from peer {}", fetched_blocks.len(), peer_hostname);
+                            info!("Fetched {} blocks from peer {}", fetched_blocks.0.len(), peer_hostname);
                             results.push((blocks_guard, fetched_blocks, peer_index));
 
                             // no more pending requests are left, just break the loop

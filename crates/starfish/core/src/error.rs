@@ -57,12 +57,13 @@ pub(crate) enum ConsensusError {
     UnexpectedGenesisBlockRequested,
 
     #[error(
-        "Expected {requested} but received {received} blocks returned from authority {authority}"
+        "Expected {requested} but received {received_headers} block headers and {received_transactions} block transactions returned from authority {authority}"
     )]
     UnexpectedNumberOfBlocksFetched {
         authority: AuthorityIndex,
         requested: usize,
-        received: usize,
+        received_headers: usize,
+        received_transactions: usize,
     },
 
     #[error("Unexpected block returned while fetching missing blocks")]
@@ -83,6 +84,12 @@ pub(crate) enum ConsensusError {
         "Too many blocks have been returned from authority {0} when requesting to fetch missing blocks"
     )]
     TooManyFetchedBlocksReturned(AuthorityIndex),
+
+    #[error(
+        "{0} block headers and {1} block bodies have been returned from authority {2} when requesting to fetch missing blocks"
+    )]
+    NumberOfBlockHeadersAndBodiesDiffers(usize, usize, AuthorityIndex),
+
 
     #[error("Too many blocks have been requested from authority {0}")]
     TooManyFetchBlocksRequested(AuthorityIndex),

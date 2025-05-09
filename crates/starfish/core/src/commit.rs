@@ -21,6 +21,7 @@ use crate::{
     leader_scoring::ReputationScores,
     storage::Store,
 };
+use crate::block_header::VerifiedBlock;
 
 /// Index of a commit among all consensus commits.
 pub type CommitIndex = u32;
@@ -228,19 +229,19 @@ impl CertifiedCommits {
 #[derive(Clone, Debug)]
 pub(crate) struct CertifiedCommit {
     commit: Arc<TrustedCommit>,
-    blocks: Vec<VerifiedBlockHeader>,
+    verified_blocks: Vec<VerifiedBlock>,
 }
 
 impl CertifiedCommit {
-    pub(crate) fn new_certified(commit: TrustedCommit, blocks: Vec<VerifiedBlockHeader>) -> Self {
+    pub(crate) fn new_certified(commit: TrustedCommit, verified_blocks: Vec<VerifiedBlock>) -> Self {
         Self {
             commit: Arc::new(commit),
-            blocks,
+            verified_blocks,
         }
     }
 
-    pub fn blocks(&self) -> &[VerifiedBlockHeader] {
-        &self.blocks
+    pub fn blocks(&self) -> &[VerifiedBlock] {
+        &self.verified_blocks
     }
 }
 
