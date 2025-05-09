@@ -631,7 +631,7 @@ impl<C: NetworkClient> CommitSyncer<C> {
         let mut fetched_blocks = BTreeMap::new();
         while let Some(result) = requests.next().await {
             for block in result? {
-                fetched_blocks.insert(block.reference(), block);
+                fetched_blocks.insert(block.reference(), block.verified_block_header);
             }
         }
 

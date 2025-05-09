@@ -316,8 +316,11 @@ impl<C: CoreThreadDispatcher> NetworkService for AuthorityService<C> {
             .into_iter()
             .chain(ancestor_blocks)
             .flatten()
-            .map(|block| SerializedBlock::from(block))
-            .collect::<Vec<_>>();
+            .map(|block| {
+                let (serialized_block_header, serialized_transactions) = block.serialized();
+                (serialized_block_header.clone(), serialized_transactions.clone())
+            })
+            .unzip();
 
         Ok(result)
     }
@@ -326,7 +329,7 @@ impl<C: CoreThreadDispatcher> NetworkService for AuthorityService<C> {
         &self,
         _peer: AuthorityIndex,
         commit_range: CommitRange,
-    ) -> ConsensusResult<(Vec<TrustedCommit>, Vec<VerifiedBlockHeader>)> {
+    ) -> ConsensusResult<(Vec<TrustedCommit>, Vec<VerifiedBlock>)> {
         fail_point_async!("consensus-rpc-response");
 
         // Compute an inclusive end index and bound the maximum number of commits
@@ -366,7 +369,7 @@ impl<C: CoreThreadDispatcher> NetworkService for AuthorityService<C> {
         }
         let certifier_blocks = self
             .store
-            .read_block_headers(&certifier_block_refs)?
+            .read_blocks(&certifier_block_refs)?
             .into_iter()
             .flatten()
             .collect();

@@ -543,7 +543,7 @@ impl<S: NetworkService> ConsensusService for TonicServiceProxy<S> {
             return Err(tonic::Status::internal("PeerInfo not found"));
         };
         let request = request.into_inner();
-        let (commits, certifier_block_headers) = self
+        let (commits, certifier_blocks) = self
             .service
             .handle_fetch_commits(peer_index, (request.start..=request.end).into())
             .await
@@ -552,13 +552,19 @@ impl<S: NetworkService> ConsensusService for TonicServiceProxy<S> {
             .into_iter()
             .map(|c| c.serialized().clone())
             .collect();
-        let certifier_block_headers = certifier_block_headers
+        let mut certifier_block_headers = vec![];
+        let mut certifier_block_transactions = vec![];
+        certifier_blocks
             .into_iter()
-            .map(|b| b.serialized().clone())
-            .collect();
+            .map(|b| {
+                let (certifier_block_header, certifier_block_transaction) = b.serialized();
+                certifier_block_headers.push(certifier_block_header.clone());
+                certifier_block_transactions.push(certifier_block_transaction.clone());
+            });
         Ok(Response::new(FetchCommitsResponse {
             commits,
             certifier_block_headers,
+            certifier_block_transactions,
         }))
     }
 
@@ -1061,6 +1067,9 @@ pub(crate) struct FetchCommitsResponse {
     // Serialized SignedBlockHeader that certify the last commit from above.
     #[prost(bytes = "bytes", repeated, tag = "2")]
     certifier_block_headers: Vec<Bytes>,
+    #[prost(bytes = "bytes", repeated, tag = "3")]
+    certifier_block_transactions: Vec<Bytes>,
+
 }
 
 #[derive(Clone, prost::Message)]

@@ -31,6 +31,7 @@ use serde::{Deserialize, Serialize};
 use starfish_config::{AuthorityIndex, NetworkKeyPair};
 
 use crate::{Round, VerifiedBlockHeader, block_header::{BlockRef, VerifiedBlock}, commit::{CommitRange, TrustedCommit}, context::Context, error::ConsensusResult};
+use crate::block_header::VerifiedTransactions;
 
 // Tonic generated RPC stubs.
 mod tonic_gen {
@@ -149,7 +150,7 @@ pub(crate) trait NetworkService: Send + Sync + 'static {
         &self,
         peer: AuthorityIndex,
         commit_range: CommitRange,
-    ) -> ConsensusResult<(Vec<TrustedCommit>, Vec<VerifiedBlockHeader>)>;
+    ) -> ConsensusResult<(Vec<TrustedCommit>, Vec<VerifiedBlock>)>;
 
     /// Handles the request to fetch the latest block for the provided
     /// `authorities`.
