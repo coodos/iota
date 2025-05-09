@@ -30,8 +30,7 @@ use futures::Stream;
 use serde::{Deserialize, Serialize};
 use starfish_config::{AuthorityIndex, NetworkKeyPair};
 
-use crate::{Round, VerifiedBlockHeader, block_header::{BlockRef, VerifiedBlock}, commit::{CommitRange, TrustedCommit}, context::Context, error::ConsensusResult};
-use crate::block_header::VerifiedTransactions;
+use crate::{Round, block_header::{BlockRef, VerifiedBlock}, commit::{CommitRange, TrustedCommit}, context::Context, error::ConsensusResult};
 
 // Tonic generated RPC stubs.
 mod tonic_gen {
@@ -102,7 +101,7 @@ pub(crate) trait NetworkClient: Send + Sync + Sized + 'static {
         peer: AuthorityIndex,
         commit_range: CommitRange,
         timeout: Duration,
-    ) -> ConsensusResult<(Vec<Bytes>, Vec<Bytes>)>;
+    ) -> ConsensusResult<(Vec<Bytes>, Vec<Bytes>, Vec<Bytes>)>;
 
     /// Fetches the latest block from `peer` for the requested `authorities`.
     /// The latest blocks are returned in the serialised format of

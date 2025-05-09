@@ -236,7 +236,7 @@ impl NetworkClient for TonicClient {
         peer: AuthorityIndex,
         commit_range: CommitRange,
         timeout: Duration,
-    ) -> ConsensusResult<(Vec<Bytes>, Vec<Bytes>)> {
+    ) -> ConsensusResult<(Vec<Bytes>, Vec<Bytes>, Vec<Bytes>)> {
         let mut client = self.get_client(peer, timeout).await?;
         let mut request = Request::new(FetchCommitsRequest {
             start: commit_range.start(),
@@ -248,7 +248,7 @@ impl NetworkClient for TonicClient {
             .await
             .map_err(|e| ConsensusError::NetworkRequest(format!("fetch_commits failed: {e:?}")))?;
         let response = response.into_inner();
-        Ok((response.commits, response.certifier_block_headers))
+        Ok((response.commits, response.certifier_block_headers, response.certifier_block_transactions))
     }
 
     async fn fetch_latest_blocks(
@@ -482,7 +482,8 @@ impl<S: NetworkService> ConsensusService for TonicServiceProxy<S> {
             .await
             .map_err(|e| tonic::Status::internal(format!("{e:?}")))?
             .map(|block| Ok(SubscribeBlocksResponse { 
-                serialized_block: block 
+                serialized_block_header: block.serialized_block_header,
+                serialized_transactions: block.serialized_transactions,
             }));
         let rate_limited_stream =
             tokio_stream::StreamExt::throttle(stream, self.context.parameters.min_round_delay / 2)

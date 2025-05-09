@@ -50,7 +50,7 @@ use tokio::{
 };
 use tracing::{debug, info, warn};
 
-use crate::{CommitConsumerMonitor, CommitIndex, block_header::{BlockHeaderAPI, SignedBlockHeader, VerifiedBlockHeader}, block_verifier::BlockVerifier, commit::{
+use crate::{CommitConsumerMonitor, CommitIndex, block_header::{BlockHeaderAPI, SignedBlockHeader}, block_verifier::BlockVerifier, commit::{
     CertifiedCommit, CertifiedCommits, Commit, CommitAPI as _, CommitDigest, CommitRange,
     CommitRef, TrustedCommit,
 }, commit_vote_monitor::CommitVoteMonitor, context::Context, core_thread::CoreThreadDispatcher, dag_state::DagState, error::{ConsensusError, ConsensusResult}, network::NetworkClient, stake_aggregator::{QuorumThreshold, StakeAggregator}};
@@ -544,7 +544,7 @@ impl<C: NetworkClient> CommitSyncer<C> {
             .start_timer();
 
         // 1. Fetch commits in the commit range from the target authority.
-        let (serialized_commits, serialized_blocks) = inner
+        let (serialized_commits, serialized_block_headers, serialized_block_transactions) = inner
             .network_client
             .fetch_commits(target_authority, commit_range.clone(), timeout)
             .await?;
@@ -561,7 +561,8 @@ impl<C: NetworkClient> CommitSyncer<C> {
                         target_authority,
                         commit_range,
                         serialized_commits,
-                        serialized_blocks,
+                        serialized_block_headers,
+                        serialized_block_transactions,
                     )
                 }
             })
@@ -631,7 +632,7 @@ impl<C: NetworkClient> CommitSyncer<C> {
         let mut fetched_blocks = BTreeMap::new();
         while let Some(result) = requests.next().await {
             for block in result? {
-                fetched_blocks.insert(block.reference(), block.verified_block_header);
+                fetched_blocks.insert(block.reference(), block);
             }
         }
 
@@ -731,7 +732,8 @@ impl<C: NetworkClient> Inner<C> {
         peer: AuthorityIndex,
         commit_range: CommitRange,
         serialized_commits: Vec<Bytes>,
-        serialized_vote_blocks: Vec<Bytes>,
+        serialized_vote_blocks_headers: Vec<Bytes>,
+        serialized_vote_blocks_transactions: Vec<Bytes>,
     ) -> ConsensusResult<(Vec<TrustedCommit>, Vec<VerifiedBlock>)> {
         // Parse and verify commits.
         let mut commits = Vec::new();
@@ -776,9 +778,9 @@ impl<C: NetworkClient> Inner<C> {
         let end_commit_ref = CommitRef::new(end_commit.index(), *end_commit_digest);
         let mut stake_aggregator = StakeAggregator::<QuorumThreshold>::new();
         let mut vote_blocks = Vec::new();
-        for serialized in serialized_vote_blocks {
+        for (serialized_block_header, serialized_transactions) in serialized_vote_blocks_headers.into_iter().zip(serialized_vote_blocks_transactions) {
             let block: SignedBlockHeader =
-                bcs::from_bytes(&serialized).map_err(ConsensusError::MalformedBlock)?;
+                bcs::from_bytes(&serialized_block_header).map_err(ConsensusError::MalformedBlock)?;
             // The block signature needs to be verified.
             self.block_verifier.verify(&block)?;
             for vote in block.commit_votes() {
@@ -786,7 +788,7 @@ impl<C: NetworkClient> Inner<C> {
                     stake_aggregator.add(block.author(), &self.context.committee);
                 }
             }
-            vote_blocks.push(VerifiedBlockHeader::new_verified(block, serialized));
+            vote_blocks.push(VerifiedBlock::try_from(SerializedBlock {serialized_block_header, serialized_transactions})?);
         }
 
         // Check if the end commit has enough votes.
